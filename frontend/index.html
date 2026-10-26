@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRS Bridge</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>CRS Bridge</h1>
+  <p class="sub">Move CRS between L1 and your FastPay rollup.</p>
+</header>
+
+<main>
+  <section class="card" id="connect-card">
+    <h2>Wallet</h2>
+    <p id="wallet-state" class="muted">Not connected.</p>
+    <button id="connect">Connect MetaMask</button>
+  </section>
+
+  <section class="card" id="config-card">
+    <h2>Endpoints</h2>
+    <label>L2 client RPC
+      <input id="client-url" value="http://127.0.0.1:9545" spellcheck="false">
+    </label>
+    <label>Gateway on L1
+      <input id="gateway-address" placeholder="0x... the ATBT_GATEWAY your deploy printed" spellcheck="false">
+    </label>
+    <p id="config-state" class="muted">Not checked.</p>
+    <button id="check">Check</button>
+  </section>
+
+  <section class="card" id="balances-card">
+    <h2>Balances</h2>
+    <table>
+      <tbody>
+        <tr><th>L1 CRS</th><td id="bal-l1">-</td></tr>
+        <tr><th>L2 balance</th><td id="bal-l2">-</td></tr>
+        <tr><th>L2 sequence</th><td id="seq-l2">-</td></tr>
+      </tbody>
+    </table>
+    <button id="refresh">Refresh</button>
+    <button id="faucet" class="secondary">Get L1 CRS from the faucet</button>
+  </section>
+
+  <section class="card">
+    <h2>Bridge in</h2>
+    <p class="muted">
+      Approve the escrow, then deposit. The balance appears on L2 once a validator
+      posts the batch that credits it, so it is not instant.
+    </p>
+    <label>Amount, in CRS
+      <input id="deposit-amount" value="10" inputmode="decimal">
+    </label>
+    <button id="deposit">Deposit to L2</button>
+  </section>
+
+  <section class="card">
+    <h2>Bridge out</h2>
+    <p class="muted">
+      Withdrawing is two steps and a wait. First an L2 transaction to the withdraw
+      precompile, which needs the L2 network selected in MetaMask. Then, once the
+      batch containing it is final, a withdraw on L1 that pays out of escrow.
+    </p>
+    <label>Amount, in CRS
+      <input id="withdraw-amount" value="5" inputmode="decimal">
+    </label>
+    <label>L1 recipient
+      <input id="withdraw-to" placeholder="0x... defaults to your own address" spellcheck="false">
+    </label>
+    <div class="row">
+      <button id="withdraw">1. Withdraw on L2</button>
+      <button id="claim" class="secondary">2. Withdraw on L1</button>
+    </div>
+    <label>Sequence of the L2 withdrawal
+      <input id="withdraw-sequence" placeholder="the sequence your withdrawal used">
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

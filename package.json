@@ -1,0 +1,29 @@
+{
+  "name": "atbt-project",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "vectors": "tsx packages/common/scripts/gen-vectors.ts",
+    "abis": "tsx packages/common/scripts/gen-abis.ts",
+    "conformance": "vitest run && forge test",
+    "up": "bash scripts/up.sh",
+    "down": "bash scripts/down.sh",
+    "grade": "bash grader/run.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^2"
+  },
+  "dependencies": {
+    "@atbt/common": "workspace:*",
+    "@atbt/validator": "workspace:*",
+    "@atbt/client": "workspace:*",
+    "@atbt/prover": "workspace:*",
+    "@atbt/malicious": "workspace:*",
+    "viem": "^2"
+  }
+}

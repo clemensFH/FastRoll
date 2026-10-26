@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "packages/**/*.ts",
+    "grader/**/*.ts",
+    "grading/**/*.ts",
+    "course/**/*.ts"
+  ],
+  "exclude": [
+    "skeleton/out",
+    "node_modules",
+    "lib"
+  ]
+}

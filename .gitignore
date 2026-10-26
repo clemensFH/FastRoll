@@ -1,0 +1,14 @@
+node_modules/
+contracts/out/
+contracts/cache/
+dist/
+*.log
+.env
+zk/build/
+zk/ptau/
+skeleton/out/
+.stack/
+docker/.addresses
+broadcast/
+cache/
+.grader/

@@ -1,0 +1,10 @@
+{
+  "name": "solution",
+  "root": "..",
+  "image": { "dockerfile": "docker/Dockerfile" },
+  "deploy": { "command": "bash grader/support/deploy.sh" },
+  "validator": { "command": "node node_modules/tsx/dist/cli.mjs packages/validator/src/index.ts" },
+  "client": { "command": "node node_modules/tsx/dist/cli.mjs packages/client/src/index.ts" },
+  "prover": { "command": "node node_modules/tsx/dist/cli.mjs packages/prover/src/index.ts" },
+  "readyTimeoutMs": 45000
+}

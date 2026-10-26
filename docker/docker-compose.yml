@@ -1,0 +1,149 @@
+# The reproducible way to run a whole L2 locally.
+#
+#   cd docker && docker compose up --build
+#
+# scripts/up.sh does the same thing from the host and starts faster. This exists
+# so a stack can be brought up on a machine that has neither foundry nor a
+# working node install, which on a course with twelve groups is most of them at
+# least once.
+#
+# Bringing it up is three phases and they are ordered by dependency, not by
+# wishful timing: the chain, then a one-shot deploy-and-stake, then everything
+# that needs addresses to exist.
+name: atbt-l2
+
+x-service: &ts
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  restart: unless-stopped
+  # On the chain, NOT on setup finishing. Setup's last act is to wait for this
+  # committee to bond itself and then cross an epoch boundary, so waiting for setup to exit would
+  # deadlock. The entrypoint blocks on the addresses file instead, which setup
+  # writes before it starts waiting.
+  depends_on:
+    anvil:
+      condition: service_healthy
+  environment: &env
+    L2_CHAIN_ID: "90007"
+    L1_RPC: http://anvil:8545
+    L1_CHAIN_ID: "31337"
+    SYNC_INTERVAL_MS: "1000"
+    POST_INTERVAL_MS: "3000"
+  volumes: ["shared:/shared", "data:/data"]
+  networks: [l2]
+
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    # The entrypoint is `forge`, so anvil has to be named explicitly. Binding to
+    # 0.0.0.0 is required for other containers to reach it, and is safe because
+    # only the published port is reachable from the host.
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337", "--silent"]
+    ports: ["8545:8545"]
+    healthcheck:
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: [l2]
+
+  # Deploys the contracts and nothing else. In the foundry image because that
+  # is where `forge` is; everything after the deploy is ordinary transactions
+  # and happens in `setup`, where there is a real language.
+  deploy:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["bash", "-c"]
+    command: ["bash grader/support/deploy.sh | tee /shared/deploy.log"]
+    # The foundry image runs as a non-root user, which cannot write to a fresh
+    # named volume. Only the one-shot containers need the privilege.
+    user: "0:0"
+    volumes:
+      - ..:/repo
+      - shared:/shared
+    working_dir: /repo
+    environment:
+      L1_RPC: http://anvil:8545
+      L2_ID: "7"
+      DEPLOYER_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    depends_on:
+      anvil:
+        condition: service_healthy
+    networks: [l2]
+
+  # Funds the committee, publishes the addresses, then mines to the next epoch
+  # once all seven have bonded THEMSELVES, since a bond counts from the next
+  # epoch. Runs once and exits.
+  #
+  # It does not bond anyone. Validators bond themselves at startup, and having
+  # this stake for them made that path dead code the first time round.
+  setup:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["npx", "tsx", "docker/setup.ts"]
+    user: "0:0"
+    volumes: ["shared:/shared"]
+    environment:
+      L1_RPC: http://anvil:8545
+      L1_CHAIN_ID: "31337"
+      DEPLOY_LOG: /shared/deploy.log
+      OUT: /shared/addresses
+    depends_on:
+      deploy:
+        condition: service_completed_successfully
+    networks: [l2]
+
+  v0: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v0, PORT: "9600", VAPI_PORT: "9700", STAKE: "10000000000000000000", VALIDATOR_KEY: "0x8100000000000000000000000000000000000000000000000000000000000000" } }
+  v1: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v1, PORT: "9600", VAPI_PORT: "9700", STAKE: "9000000000000000000", VALIDATOR_KEY: "0x8200000000000000000000000000000000000000000000000000000000000000" } }
+  v2: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v2, PORT: "9600", VAPI_PORT: "9700", STAKE: "8000000000000000000", VALIDATOR_KEY: "0x8300000000000000000000000000000000000000000000000000000000000000" } }
+  v3: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v3, PORT: "9600", VAPI_PORT: "9700", STAKE: "7000000000000000000", VALIDATOR_KEY: "0x8400000000000000000000000000000000000000000000000000000000000000" } }
+  v4: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v4, PORT: "9600", VAPI_PORT: "9700", STAKE: "6000000000000000000", VALIDATOR_KEY: "0x8500000000000000000000000000000000000000000000000000000000000000" } }
+  v5: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v5, PORT: "9600", VAPI_PORT: "9700", STAKE: "5000000000000000000", VALIDATOR_KEY: "0x8600000000000000000000000000000000000000000000000000000000000000" } }
+  v6: { <<: *ts, environment: { <<: *env, ROLE: validator, NAME: v6, PORT: "9600", VAPI_PORT: "9700", STAKE: "4000000000000000000", VALIDATOR_KEY: "0x8700000000000000000000000000000000000000000000000000000000000000" } }
+
+  client:
+    <<: *ts
+    ports: ["9545:9545"]
+    environment:
+      <<: *env
+      ROLE: client
+      NAME: client
+      PORT: "9545"
+      HEALTH_METHOD: eth_chainId
+      PEERS: "http://v0:9600,http://v1:9600,http://v2:9600,http://v3:9600,http://v4:9600,http://v5:9600,http://v6:9600"
+      PROVER_URL: http://prover:9900
+      MIN_GAS_PRICE: "1000000000"
+
+  prover:
+    <<: *ts
+    ports: ["9900:9900"]
+    environment:
+      <<: *env
+      ROLE: prover
+      NAME: prover
+      PORT: "9900"
+      HEALTH_METHOD: prover_status
+      PEERS: "http://v0:9600,http://v1:9600,http://v2:9600,http://v3:9600,http://v4:9600,http://v5:9600,http://v6:9600"
+      PROVER_KEY: "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
+      SCAN_INTERVAL_MS: "3000"
+
+  frontend:
+    image: node:22-alpine
+    command: ["npx", "--yes", "http-server", "-p", "8080", "-a", "0.0.0.0", "/site"]
+    volumes: ["../frontend:/site:ro"]
+    ports: ["8080:8080"]
+    networks: [l2]
+
+networks:
+  l2: {}
+
+volumes:
+  # Carries the deployed addresses from setup to everything else. A file rather
+  # than env_file, because env_file is read before setup has run.
+  shared: {}
+  # Each validator's optional dataDir. Persisting is the validator's choice; a
+  # `docker compose down -v` removes this and every validator then takes the
+  # cold path, which is exactly what the spec says an absent dataDir means.
+  data: {}

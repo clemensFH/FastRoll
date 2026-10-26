@@ -1,0 +1,107 @@
+{
+  "description": "state transition replay: a total, deterministic function over certified orders",
+  "chainId": 90007,
+  "userKeys": [
+    "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "0x0000000000000000000000000000000000000000000000000000000000000003",
+    "0x0000000000000000000000000000000000000000000000000000000000000004"
+  ],
+  "genesis": {
+    "balance": "1000000000000000000000",
+    "addresses": [
+      "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+      "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF",
+      "0x6813Eb9362372EEF6200f3b1dbC3f819671cBA69"
+    ],
+    "root": "0xb38a67a68540747891016462742f087745914fe7a6cc9bd2b75d4c51164c294a"
+  },
+  "raws": [
+    "0xf86e80843b9aca00825208942b5ad5c4795c026514f8317c7a215e218dccd6cf884563918244f40000808302bf52a08c9e65f93723d34ec8b44a7b4136106bf018d4b6fac1d7c06ca9da55623ce530a04a912bb5a457934ff933b7f96dcd176981d4a679c038a985490f10f8b41eebee",
+    "0xf86e80843b9aca00825208946813eb9362372eef6200f3b1dbc3f819671cba698829a2241af62c0000808302bf52a0bd0e0a0d832d53baec9a48528b6b9da833592f30cc52b9b9bb179960441c2e53a04afc32a178c4c996e3834ac8c989f2096f80948bbc4336ebd8a6233ce79edbdd",
+    "0xf86e01843b9aca00825208947e5f4552091a69125d5dfcb7b8c2659029395bdf881bc16d674ec80000808302bf52a013b3c70a304d80a43d5bb0eb146a3b6ed5c072e12651faabcc7aaa8baa766c30a05a71cf4ba107bf1ae9be08e92f6987814c56a9b5bb78c9caa47401534594b153",
+    "0xf86c80843b9aca008252089400000000000000000000000000000000f00000018603a352944000808302bf52a040d2303f1f769b263dc0fe3444b294f4abe1e9e659aafbcf5d792958354b9a6ba04f9b5ff43fad22b66cb35e219671c76937fce6f0772d75c17ccd8f88c108ab60",
+    "0xf88e02843b9aca008252089400000000000000000000000000000000000000fe880de0b6b3a7640000a00000000000000000000000001eff47bc3a10a45d4b230b5d10e37751fe6aa7188302bf52a0c7b7d9b8ca56969be8286c44c713337e125d6a2f6b95c1cdb6366b97286dc2a5a00ef9fb8d3a137d20acbb6c5dea5be06c3310640de5314a07c314ca040208205c"
+  ],
+  "steps": [
+    {
+      "orderHash": "0x48b53dd0cf6abad4d954b93e075315f11d54728ad4b9360d0a78bf5033b32bbc",
+      "kind": "transfer",
+      "sender": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+      "sequence": "0",
+      "amount": "5000000000000000000",
+      "applied": true,
+      "reason": null,
+      "withdrawal": null,
+      "stateRootAfter": "0xe83d069a90f8cbd8ba24122f4d6d031237543cf29cd7088fec991b9f7844c5bf"
+    },
+    {
+      "orderHash": "0x6d3f83450e80cc07992fe06b1bf03b8b7d150cb21a633c7132d655fac26baae0",
+      "kind": "transfer",
+      "sender": "0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF",
+      "sequence": "0",
+      "amount": "3000000000000000000",
+      "applied": true,
+      "reason": null,
+      "withdrawal": null,
+      "stateRootAfter": "0x08fa2040c8309a008cc4e8a022e16a1005b6695df1cfc76c19881047efa95709"
+    },
+    {
+      "orderHash": "0x309b5144f34fa0f7cff643963e72ffed9e0e71e04641257de7929a57ca0872af",
+      "kind": "transfer",
+      "sender": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+      "sequence": "1",
+      "amount": "2000000000000000000",
+      "applied": true,
+      "reason": null,
+      "withdrawal": null,
+      "stateRootAfter": "0xb4a49510692e02e595dce62a110202083a79e13e916ba9b2ba6941a0a3fa5bbd"
+    },
+    {
+      "orderHash": "0x4059e894183c2470e7de2c0ce91c78c9ccf53d6b7270cc318d64c7a59c4755fe",
+      "kind": "transfer",
+      "sender": "0x6813Eb9362372EEF6200f3b1dbC3f819671cBA69",
+      "sequence": "0",
+      "amount": "4000000000000",
+      "applied": true,
+      "reason": null,
+      "withdrawal": null,
+      "stateRootAfter": "0x901fb127e4bcd6b417e66f39de2b26f81a24524de44002e1a004c00610d35c99"
+    },
+    {
+      "orderHash": "0x1ff51b63087a92f305189a9a4512b1800cf7798789405014bb3f182dcf91f3f1",
+      "kind": "withdraw",
+      "sender": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+      "sequence": "2",
+      "amount": "1000000000000000000",
+      "applied": true,
+      "reason": null,
+      "withdrawal": {
+        "sender": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+        "sequence": "2",
+        "recipient": "0x1efF47bc3a10a45D4B230B5d10E37751FE6AA718",
+        "amount": "1000000000000000000"
+      },
+      "stateRootAfter": "0x3a0bc12458746430ac538f4314e0768b87f3671054f5c0d2ff4c95f010a7fb2f"
+    }
+  ],
+  "postStateRoot": "0x3a0bc12458746430ac538f4314e0768b87f3671054f5c0d2ff4c95f010a7fb2f",
+  "accountsTouched": 4,
+  "rejections": [
+    {
+      "name": "INVALID_NONCE",
+      "orderHash": "0x10c9bd932047c1123f9fc7cd988b69f59420e5af51206ab1ced6a0475b395e68",
+      "applied": false,
+      "reason": "INVALID_NONCE",
+      "rootUnchanged": true
+    },
+    {
+      "name": "INSUFFICIENT_BALANCE",
+      "orderHash": "0x05a6622b26e992af172b7029b0a4c627a349f625fb2473cef8575fcda8e2d500",
+      "applied": false,
+      "reason": "INSUFFICIENT_BALANCE",
+      "rootUnchanged": true
+    }
+  ],
+  "note": "a rejected order is a complete no-op: no debit, no credit, the sequence does not advance"
+}

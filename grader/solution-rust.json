@@ -1,0 +1,10 @@
+{
+  "name": "solution-rust",
+  "root": "..",
+  "image": { "dockerfile": "rust/Dockerfile" },
+  "deploy": { "command": "bash grader/support/deploy.sh" },
+  "validator": { "command": "atbt-validator" },
+  "client": { "command": "atbt-client" },
+  "prover": { "command": "atbt-prover" },
+  "readyTimeoutMs": 45000
+}

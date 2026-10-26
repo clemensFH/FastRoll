@@ -1,0 +1,25 @@
+# The build context, kept to what the Dockerfile actually copies.
+#
+# Without this every build sent 236MB of node_modules and 20MB of .git to the
+# daemon, and `COPY packages ./packages` brought pnpm's nested node_modules
+# along with it. Those are symlinks into a store that does not exist in the
+# image, so they arrive dangling: worse than absent, and silently so.
+node_modules
+**/node_modules
+.git
+.gitignore
+
+# Build output. The image compiles no contracts and runs no forge. Cargo's
+# target directory is gigabytes and is rebuilt inside rust/Dockerfile anyway.
+rust/target
+rust/*/target
+contracts/out
+contracts/cache
+cache
+broadcast
+lib
+
+# Local run state.
+.grader
+.stack
+skeleton/out

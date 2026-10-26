@@ -1,0 +1,8 @@
+{
+  "name": "@atbt/validator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": { "viem": "^2", "@atbt/common": "workspace:*" }
+}

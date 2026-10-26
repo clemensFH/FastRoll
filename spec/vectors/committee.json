@@ -1,0 +1,51 @@
+{
+  "description": "top-N stake selection, ties broken on the address ascending",
+  "stakes": [
+    {
+      "validator": "0xD01C9d93efC83C00B30f768F832182BEfF65696f",
+      "amount": "20000000000000000000"
+    },
+    {
+      "validator": "0x00eDf2d16AfbC028FB1e879559b07997Af79539f",
+      "amount": "19000000000000000000"
+    },
+    {
+      "validator": "0xF5d722030D17CA01F2813Af9E7be158D7a037997",
+      "amount": "18000000000000000000"
+    },
+    {
+      "validator": "0xAe3d43Ab6FdCD35386db427099FF11Aa670eE0F4",
+      "amount": "17000000000000000000"
+    },
+    {
+      "validator": "0x0DC8B8eF8457b1e45ac277D65ac5987B547Ba775",
+      "amount": "16000000000000000000"
+    },
+    {
+      "validator": "0xdE521346f9327a4314A18B2cda96B2a33603177A",
+      "amount": "5000000000000000000"
+    },
+    {
+      "validator": "0x69842e12d6F36f9f93F06086B70795bFc7e02745",
+      "amount": "5000000000000000000"
+    },
+    {
+      "validator": "0x00000000000000000000000000000000000000AA",
+      "amount": "5000000000000000000"
+    },
+    {
+      "validator": "0x00000000000000000000000000000000000000bb",
+      "amount": "1000000000000000000"
+    }
+  ],
+  "committee": [
+    "0xD01C9d93efC83C00B30f768F832182BEfF65696f",
+    "0x00eDf2d16AfbC028FB1e879559b07997Af79539f",
+    "0xF5d722030D17CA01F2813Af9E7be158D7a037997",
+    "0xAe3d43Ab6FdCD35386db427099FF11Aa670eE0F4",
+    "0x0DC8B8eF8457b1e45ac277D65ac5987B547Ba775",
+    "0x00000000000000000000000000000000000000AA",
+    "0x69842e12d6F36f9f93F06086B70795bFc7e02745"
+  ],
+  "note": "three validators tie at 5 CRS for the last two seats, so the two lowest addresses sit and the highest does not"
+}

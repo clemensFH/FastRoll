@@ -1,0 +1,46 @@
+{
+  "description": "frozen protocol parameters, mirrored in contracts/src/lib/Protocol.sol",
+  "committeeSize": 7,
+  "quorum": 5,
+  "maxFaulty": 2,
+  "chainIdBase": 90000,
+  "l2Id": 7,
+  "chainId": 90007,
+  "gasPerTx": "21000",
+  "epochBlocks": "1000",
+  "unbondingEpochs": "3",
+  "withdrawPrecompile": "0x00000000000000000000000000000000000000fe",
+  "treeDepth": 160,
+  "epochs": [
+    {
+      "l1Block": "0",
+      "epoch": "0",
+      "snapshotBlock": "0"
+    },
+    {
+      "l1Block": "1",
+      "epoch": "0",
+      "snapshotBlock": "0"
+    },
+    {
+      "l1Block": "999",
+      "epoch": "0",
+      "snapshotBlock": "0"
+    },
+    {
+      "l1Block": "1000",
+      "epoch": "1",
+      "snapshotBlock": "999"
+    },
+    {
+      "l1Block": "1001",
+      "epoch": "1",
+      "snapshotBlock": "999"
+    },
+    {
+      "l1Block": "12345",
+      "epoch": "12",
+      "snapshotBlock": "11999"
+    }
+  ]
+}

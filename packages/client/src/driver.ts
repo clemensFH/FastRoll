@@ -21,12 +21,13 @@ import {
   type Certificate,
   type TransferOrder,
 } from "@atbt/common";
+import { rpc } from "viem/utils";
 
 
 export interface Peer {
   url: string;
   /** Filled in from fastpay_info, so a misconfigured peer list is visible. */
-  address?: Address;
+  address?: Address; // pub Key
 }
 
 export interface DriveResult {
@@ -191,7 +192,22 @@ export async function broadcast(peers: Peer[], certificate: Certificate, pollMs 
   // n - f = 5 have accepted, or all have answered; the rest may carry on
   // unwaited.
   // TODO(task-1): broadcast
-  throw new Error("TODO(task-1): broadcast");
+
+  let accepted: number = 0;
+
+  let calls: Promise<unknown>[] = [];
+  for (var peer of peers) {
+    calls.push(within<unknown>(rpcCall(peer.url, "fastpay_handleCertificate", [certificate]), POLL_TIMEOUT_MS, null));
+  }
+
+  let responses = await until<unknown>(calls, sofar);
+
+  return accepted;
+  //throw new Error("TODO(task-1): broadcast");
+}
+
+function sofar(currentsResults: unknown[]) {
+  return currentsResults.filter(i => i !== null).length >= QUORUM;
 }
 
 const POLL_TIMEOUT_MS = 8000;

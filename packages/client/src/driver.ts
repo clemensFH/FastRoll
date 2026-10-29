@@ -10,11 +10,12 @@
  * that is not one round trip. The user signs a legacy transaction, this drives
  * everything after it, and the transaction hash comes back as usual.
  */
-import type { Address, Hex } from "viem";
+import type { Address, Hash, Hex } from "viem";
 import {
   COMMITTEE_SIZE,
   MAX_FAULTY,
   QUORUM,
+  RpcFault,
   decodeOrder,
   recoverVoter,
   rpcCall,
@@ -22,7 +23,11 @@ import {
   type TransferOrder,
 } from "@atbt/common";
 import { rpc } from "viem/utils";
+import { type } from "node:os";
 
+// to store Peer infos ?
+// import { Level } from "level";
+// const db = new Level<string, any>("./peer_data");
 
 export interface Peer {
   url: string;
@@ -78,6 +83,33 @@ export class UnconfirmedError extends Error {
     );
   }
 }
+
+interface RpcSuccessResult {}
+
+export interface HandleCertResult extends RpcSuccessResult {
+    readonly ok: boolean,
+    readonly signers: Address[],
+    readonly pooled: number,
+    readonly orderHash: Hash
+}
+
+interface PeerData extends RpcSuccessResult {
+  name: string,
+  address: Address,
+  mode: "standalone" | "anchored",
+  chainId: number,
+  epoch: Hex,
+  committee: Address[],
+}
+
+export interface HandleOrderResult extends RpcSuccessResult {
+  readonly validator: Address,
+  readonly epoch: Hex,
+  readonly orderHash: Hash,
+  readonly signature: Hex,
+}
+
+type RpcResult = RpcSuccessResult | RpcFault | undefined;
 
 /**
  * Wait for `p`, or for `ms`, whichever is first.
@@ -137,7 +169,7 @@ function reasonOf(e: unknown): string {
  */
 export async function drive(
   peers: Peer[],
-  raw: Hex,
+  raw: Hex,         // order as raw byte data
   chainId: number,
   epoch: bigint,
   committee: readonly Address[],
@@ -176,7 +208,50 @@ export async function drive(
   // exactly when a validator signed two conflicting orders. A prover being
   // down must never stop a payment.
   // TODO(task-1): drive
-  throw new Error("TODO(task-1): drive");
+
+  // brocast to committee
+
+  const calls = committee.flatMap(v => within<RpcResult>(rpcCall<RpcResult>(v, "fastpay_handleOrder", [raw, epoch]), pollMs, undefined));
+  
+  let responses = await until<RpcResult>(calls, hasEnoughVotes);
+
+  // form transfer certificate
+
+  let acceptances = responses.filter(r => r !== undefined && !(r instanceof RpcFault)).map(r => r as HandleOrderResult);
+  let refusals = responses.filter(r => r instanceof RpcFault).map(r => r as RpcFault).map(r => ({url: "woher?", reason: reasonOf(r)}));
+  let order = await decodeOrder(raw, chainId);
+  let votes = [...(new Set<Address>(acceptances.map(a => a.validator)))].filter(v => committee.includes(v)).length;
+
+  //recoverVoter(chainId, epoch, order, )
+
+  if (votes < QUORUM) {
+    throw new NoQuorumError(order, votes, refusals);
+  }
+
+  const certificate: Certificate = {
+    epoch: epoch,
+    order: raw,
+    signatures: acceptances.map(a => a.signature),
+  };
+
+  let confCount = await broadcast(peers, certificate);
+  if (confCount < QUORUM) {
+    throw new UnconfirmedError(order, confCount, certificate);
+  }
+
+  const driveResult: DriveResult = {
+    order: order,
+    certificate: certificate,
+    votes: votes,
+    refusals: refusals,
+    confirmed: confCount,
+  };
+
+  return driveResult;
+}
+
+function hasEnoughVotes(currentsVotes: RpcResult[]): boolean {
+  return currentsVotes.filter(v => v !== undefined).length >= QUORUM;
 }
 
 /**
@@ -193,21 +268,18 @@ export async function broadcast(peers: Peer[], certificate: Certificate, pollMs 
   // unwaited.
   // TODO(task-1): broadcast
 
-  let accepted: number = 0;
-
-  let calls: Promise<unknown>[] = [];
+  let calls: Promise<RpcResult>[] = [];
   for (var peer of peers) {
-    calls.push(within<unknown>(rpcCall(peer.url, "fastpay_handleCertificate", [certificate]), POLL_TIMEOUT_MS, null));
+    calls.push(within<RpcResult>(rpcCall<RpcResult>(peer.url, "fastpay_handleCertificate", [certificate]), pollMs, undefined));
   }
 
-  let responses = await until<unknown>(calls, sofar);
+  let responses = await until<RpcResult>(calls, hasEnoughOKs);
 
-  return accepted;
-  //throw new Error("TODO(task-1): broadcast");
+  return responses.filter(i => i !== undefined && !(i instanceof RpcFault) && (i as HandleCertResult).ok).length;
 }
 
-function sofar(currentsResults: unknown[]) {
-  return currentsResults.filter(i => i !== null).length >= QUORUM;
+function hasEnoughOKs(currentsResults: RpcResult[]): boolean{
+  return currentsResults.filter(i => i !== undefined && !(i instanceof RpcFault) && (i as HandleCertResult)).length >= QUORUM;
 }
 
 const POLL_TIMEOUT_MS = 8000;
@@ -218,5 +290,17 @@ export async function identify(peers: Peer[]): Promise<Peer[]> {
   // addresses. One unreachable peer must not lose the others: keep what you
   // knew about it rather than dropping it.
   // TODO(task-1): identify
-  throw new Error("TODO(task-1): identify");
+
+  for (const peer of peers) {
+    var res = await within<unknown>(rpcCall<PeerData>(peer.url, "fastpay_info"), POLL_TIMEOUT_MS, undefined);
+    if(res !== undefined) {
+
+      // TODO save to DB (?)
+
+      // update address
+      peer.address = (res as PeerData).address;
+    }
+  }
+
+  return peers;
 }

@@ -19,11 +19,12 @@
     "vitest": "^2"
   },
   "dependencies": {
-    "@atbt/common": "workspace:*",
-    "@atbt/validator": "workspace:*",
     "@atbt/client": "workspace:*",
-    "@atbt/prover": "workspace:*",
+    "@atbt/common": "workspace:*",
     "@atbt/malicious": "workspace:*",
+    "@atbt/prover": "workspace:*",
+    "@atbt/validator": "workspace:*",
+    "level": "^10.0.0",
     "viem": "^2"
   }
 }

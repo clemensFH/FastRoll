@@ -20,9 +20,12 @@ import {
   voteDigest,
   type Certificate,
   type Handler,
+  orderHash,
+  decodeCertData,
 } from "@atbt/common";
 
-import { Refusal, type ValidatorState } from "./state.js";
+import { Refusal, ValidatorInfo, type ValidatorState } from "./state.js";
+import { HandleOrderResult, HandleCertResult } from "@atbt/client";
 
 export interface Signer {
   address: Address;
@@ -82,7 +85,58 @@ export function fastpayHandler(state: ValidatorState, signer: Signer): Handler {
   // accountInfo publishes `pending` with this validator's own vote on it, so
   // a challenger can collect votes by asking rather than waiting to be told.
   // TODO(task-1): the fastpay_ surface
-  throw new Error("TODO(task-1): the fastpay_ surface");
+  
+  return async (method: string, params: unknown[]) => {
+    console.log("testfastpay");
+    switch (method.toLowerCase().split("_")[1]) {
+
+      case "info":
+        return state.getInfo();
+
+      case "accountinfo":
+        return state.getAccountInfo(params[0] as Address);
+
+      case "handleorder":
+        var raw = params[0] as Hex;
+        var order = await decodeOrder(raw, state.chainId);
+        await state.check(order, params[1] as bigint);
+        var hash = orderHash(raw);
+        var signature = await signer.sign(raw);
+
+        var result: HandleOrderResult = {
+          validator: state.address,
+          epoch: '0x0', //state.epoch,
+          orderHash: hash,
+          signature: signature,
+        }
+
+        return result;
+
+      case "handlecertificate":
+        var cert = readCert(params[0] as Hex)
+        var order = await decodeOrder(cert.order, state.chainId);
+        state.confirm(cert, order);
+
+        var res: HandleCertResult = {
+          ok: true,
+          signers: cert.signatures,
+          pooled: 0,
+          orderHash: orderHash(cert.order),
+        }
+
+        return res;
+
+      default:
+        throw new Error(`Unknown method: ${method}`);
+    }
+  };
+}
+
+export interface VapiInfoResult extends ValidatorInfo {
+  fianlizedRoot: null,
+  lastL1Sync: null,
+  pooledCertificates: number,
+  kownAccounts: number,
 }
 
 /** The control and introspection interface. Loopback only. */
@@ -100,7 +154,43 @@ export function vapiHandler(state: ValidatorState, hooks: Hooks): Handler {
   // wipe a validator, re-point it at another chain and mint balances, and
   // nothing ever called any of it.
   // TODO(task-1): the vapi_ surface
-  throw new Error("TODO(task-1): the vapi_ surface");
+  
+  return async (method: string, params: unknown[]) => {
+    console.log("testvapi");
+    switch (method.toLowerCase().split("_")[1]) {
+
+      case "info":
+        var baseInfo = state.getInfo();
+        var vapiInfo: VapiInfoResult = {
+          name: baseInfo.name,
+          address: baseInfo.address,
+          mode: baseInfo.mode,
+          chainId: baseInfo.chainId,
+          epoch: baseInfo.epoch,
+          committee: baseInfo.committee,
+          fianlizedRoot: null,
+          lastL1Sync: null,
+          pooledCertificates: state.certPool.size,
+          kownAccounts: state.accounts().length,
+        }
+        return vapiInfo;
+
+      case "account":
+        var baseAccInfo = state.getAccountInfo(params[0] as Address);
+
+        return { address: baseAccInfo.address, balance: baseAccInfo.balance, nextSequence: baseAccInfo.nextSequence,
+                pending: baseAccInfo.pending };
+
+      case "pending":
+        return state.allPending();
+
+      case "health":
+        return { ok: true, lastL1Sync: null, stoppedAt: null };
+      
+      default:
+        throw new Error(`Unknown method: ${method}`);
+    }
+  };  
 }
 
 /**

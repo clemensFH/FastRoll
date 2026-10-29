@@ -18,8 +18,10 @@
  * have signed" provable on L1. Under paper semantics a validator's balance view
  * is unobservable, so the same misbehaviour is only ever auditable.
  */
-import type { Address, Hex } from "viem";
+import { getAddress, type Address, type Hex } from "viem";
 import {
+  decodeOrder,
+  InvalidOrderError,
   QUORUM,
   type Account,
   type Certificate,
@@ -50,6 +52,7 @@ export class Refusal extends Error {
 }
 
 /** Signed balance, because standalone mode permits temporary negatives. */
+// mapped to address
 interface LedgerAccount {
   balance: bigint;
   nextSequence: bigint;
@@ -65,6 +68,21 @@ export interface ValidatorConfig {
   genesis?: { address: Address; balance: bigint }[];
 }
 
+export interface ValidatorInfo {
+  name: string;
+  address: Address;
+  mode: Mode;
+  chainId: number;
+  epoch : bigint;
+  committee: Address[];
+}
+
+export interface AccountInfo extends LedgerAccount {
+  address: Address,
+  pending: TransferOrder | undefined,
+  vote: { epoch: bigint; signature: Hex } | undefined,
+}
+
 export class ValidatorState {
   readonly mode: Mode;
   readonly chainId: number;
@@ -75,6 +93,7 @@ export class ValidatorState {
   tree: StateTree | null = null;
   /** Standalone: this validator's own view. Anchored: unused. */
   private ledger = new Map<string, LedgerAccount>();
+                      //  address?
 
   /**
    * The last order this validator signed per account, awaiting confirmation.
@@ -88,6 +107,7 @@ export class ValidatorState {
    * it clears at every epoch boundary because the votes it protected expired.
    */
   private pending = new Map<string, TransferOrder>();
+                        // address?
 
   epoch = 0n;
   committee: Address[] = [];
@@ -101,6 +121,7 @@ export class ValidatorState {
    * one else's, because it does not aggregate.
    */
   votes = new Map<string, { epoch: bigint; signature: Hex }>();
+
   lastL1Sync: bigint | null = null;
   finalizedRoot: Hex | null = null;
   /** Anchored: the batch the replay stopped at, because its claimed root does
@@ -120,7 +141,6 @@ export class ValidatorState {
    *  it would be equivocation. Keyed by epoch, because those votes expire at
    *  the boundary. */
   signed = new Map<string, Hex>();
-
   /** Anchored: certificates seen but not yet posted to L1. */
   certPool = new Map<string, Certificate>();
 
@@ -138,6 +158,34 @@ export class ValidatorState {
     }
   }
 
+  getInfo(): ValidatorInfo {
+    var info: ValidatorInfo = {
+      name: this.name,
+      address: this.address,
+      mode: this.mode,
+      chainId: this.chainId,
+      epoch: this.epoch,
+      committee: this.committee,
+    };
+    return info;
+  }
+
+  getAccountInfo(account: Address): AccountInfo {
+    var ledger = this.account(account);
+    var pendingOrder = this.pending.get(account);
+    var vote = this.votes.get(account);
+
+    var info: AccountInfo = {
+      address: account,
+      balance: ledger.balance,
+      nextSequence: ledger.nextSequence,
+      pending: pendingOrder,
+      vote: vote,
+    }
+
+    return info;
+  }
+
   // ------------------------------------------------------------- account view
 
   account(addr: Address): LedgerAccount {
@@ -145,20 +193,38 @@ export class ValidatorState {
     // been seen. In ANCHORED mode this reads the replayed tree instead, which
     // is Task 2.
     // TODO(task-1): account
-    throw new Error("TODO(task-1): account");
+
+    var acc = this.ledger.get(addr);
+
+    if (acc === undefined) {
+      const newAcc: LedgerAccount = {
+        balance: 0n,
+        nextSequence: 1n,
+      }
+      this.ledger.set(addr, newAcc);
+
+      return newAcc;
+    }
+
+    return acc;
   }
 
   pendingOf(addr: Address): TransferOrder | undefined {
     // The pending slot for one sender, if it holds anything.
     // TODO(task-1): pendingOf
-    throw new Error("TODO(task-1): pendingOf");
+
+    return this.pending.get(addr);
   }
 
   allPending(): { account: Address; order: TransferOrder }[] {
     // Every pending order. `vapi_pending` publishes this, and so does the
     // prover's evidence gathering.
     // TODO(task-1): allPending
-    throw new Error("TODO(task-1): allPending");
+    var res: {account: Address, order: TransferOrder}[] = [];
+
+    this.pending.forEach((order, addr) => {res.push({account: getAddress(addr, this.chainId), order: order})})
+
+    return res;
   }
 
   // ------------------------------------------------------------ the five checks
@@ -169,7 +235,7 @@ export class ValidatorState {
    * All five must hold. Dropping any one of them is a distinct way to lose
    * safety, and the grader injects a malicious validator for each.
    */
-  check(order: TransferOrder, epoch: bigint): void {
+  async check(order: TransferOrder, epoch: bigint): Promise<void> {
     // All five signing rules from spec/SPEC.md, and each one is a scenario.
     //
     // The fifth is the interesting one: `pending` for that sender must be
@@ -180,7 +246,44 @@ export class ValidatorState {
     // Throw `Refusal` with a typed reason. A client that has to parse English
     // to know whether to retry will get it wrong.
     // TODO(task-1): check
-    throw new Error("TODO(task-1): check");
+
+    if (this.epoch !== epoch) {
+      const reason: RefusalReason = "WRONG_EPOCH";
+      throw new Refusal(reason)
+    }
+
+    try {
+      await decodeOrder(order.raw, this.chainId)
+    }
+    catch (error) {
+      const reason: RefusalReason = "INVALID_FORMAT";
+      throw new Refusal(reason)
+    }
+    
+    if (order.amount <= 0n) {
+      const reason: RefusalReason = "ZERO_AMOUNT";
+      throw new Refusal(reason)
+    }
+
+    var ledger = this.ledger.get(order.sender);
+    if (ledger === undefined || ledger.nextSequence !== order.sequence) {
+      const reason: RefusalReason = "INVALID_NONCE";
+      throw new Refusal(reason)
+    }
+
+    if (ledger.balance < (order.amount + order.fee)) {
+      const reason: RefusalReason = "INSUFFICIENT_BALANCE";
+      throw new Refusal(reason)
+    }
+
+    var pending = this.pending.get(order.sender);
+    if (pending !== undefined && pending.raw !== order.raw) {
+      const reason: RefusalReason = "CONFLICTING_PENDING";
+      throw new Refusal(reason)
+    }
+
+    this.pending.set(order.sender, order);
+
   }
 
   /** Record that we voted for this order. Idempotent for a re-send. */
@@ -189,7 +292,7 @@ export class ValidatorState {
     // Signed Echo Broadcast, and it is what makes a quorum unable to certify
     // two different orders at one sequence.
     // TODO(task-1): remember
-    throw new Error("TODO(task-1): remember");
+    this.pending.set(order.sender, order);
   }
 
   // ------------------------------------------------------------ confirmation
@@ -219,7 +322,23 @@ export class ValidatorState {
     // certificate is pooled for posting and the state moves when L1 accepts
     // the batch that carries it.
     // TODO(task-1): confirm
-    throw new Error("TODO(task-1): confirm");
+
+    var senderLedger = this.ledger.get(order.sender);
+    var recvLedger = this.ledger.get(order.recipient);
+
+    if (senderLedger === undefined || recvLedger === undefined) {
+      return;
+    }
+
+    var fee = order.fee// * order.gasPrice;
+    senderLedger.balance -= (fee + order.amount);
+    senderLedger.nextSequence++;
+
+    recvLedger.balance += order.amount;
+
+    this.ledger.set(order.sender, senderLedger);
+    this.pending.delete(order.sender);
+    this.ledger.set(order.recipient, recvLedger);
   }
 
   /**
@@ -281,7 +400,9 @@ export class ValidatorState {
   accounts(): Address[] {
     // Every address this validator knows about.
     // TODO(task-1): accounts
-    throw new Error("TODO(task-1): accounts");
+    var addresses: Address[] = [];
+    this.ledger.forEach((acc, addr) => {addresses.push(getAddress(addr, this.chainId))})
+    return addresses;
   }
 
 

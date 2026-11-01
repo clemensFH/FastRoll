@@ -352,6 +352,8 @@ export function createClient(opts: ClientOptions) {
         settled.set(order.hash, {epoch: epoch, orderHash: order.hash, votes: votes.length, sender: order.sender, to: order.recipient, sequence: order.sequence, block: BigInt(settled.size+1)})
 
         return order.hash;  
+
+        // TODO restliche Methoden (siehe Protocol Description)
       
       default:
         throw new Error(`Unknown method: ${method}`);

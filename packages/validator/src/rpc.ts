@@ -99,13 +99,13 @@ export function fastpayHandler(state: ValidatorState, signer: Signer): Handler {
       case "handleorder":
         var raw = params[0] as Hex;
         var order = await decodeOrder(raw, state.chainId);
-        await state.check(order, params[1] as bigint);
+        await state.check(order, BigInt(params[1] as string));
         var hash = orderHash(raw);
         var signature = await signer.sign(raw);
 
         var result: HandleOrderResult = {
           validator: state.address,
-          epoch: '0x0', //state.epoch,
+          epoch: `0x${state.epoch}`,
           orderHash: hash,
           signature: signature,
         }

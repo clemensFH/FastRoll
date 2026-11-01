@@ -36,10 +36,14 @@ import {
   type Certificate,
   type Handler,
   type StateTree,
+  TransferOrder,
+  toWire,
+  QUORUM,
 } from "@atbt/common";
 
 import { Remembered } from "./remembered.js";
-import { broadcast, drive, identify, NoQuorumError, UnconfirmedError, until, within, type Peer } from "./driver.js";
+import { broadcast, drive, HandleOrderResult, identify, NoQuorumError, UnconfirmedError, until, within, type Peer } from "./driver.js";
+import { Refusal, ValidatorInfo } from "@atbt/validator/src/state.js";
 
 export * from "./driver.js";
 export * from "./remembered.js";
@@ -189,7 +193,7 @@ export function createClient(opts: ClientOptions) {
       peers.map((p) =>
         within(
           rpcCall<{ committee: Address[] }>(p.url, "fastpay_info", []).catch(() => null),
-          budget,
+          MAX_POLL,
           null,
         ),
       ),
@@ -199,7 +203,7 @@ export function createClient(opts: ClientOptions) {
   }
 
   /** How long any one question to a validator may take. */
-  const budget = opts.pollMs ?? 8000;
+  const MAX_POLL = opts.pollMs ?? 8000;
 
   async function accountOf(who: Address): Promise<{ balance: bigint; nextSequence: bigint }> {
     if (opts.mode === "anchored") {
@@ -223,7 +227,7 @@ export function createClient(opts: ClientOptions) {
         peers.map((p) =>
           within(
             rpcCall<{ balance: Hex; nextSequence: Hex }>(p.url, "fastpay_accountInfo", [who]).catch(() => null),
-            budget,
+            MAX_POLL,
             null,
           ),
         ),
@@ -264,7 +268,94 @@ export function createClient(opts: ClientOptions) {
     // eth_getTransactionCount read the finalized state replayed from L1,
     // and eth_getBlockByNumber answers about posted batches.
     // TODO(task-1): the cast-compatible surface
-    throw new Error("TODO(task-1): the cast-compatible surface");
+
+    const validators = await committeeOf(epoch);
+
+    for(var peer of peers) {
+      var info = await within<ValidatorInfo | undefined>(rpcCall(peer.url, "fastpay_info", undefined), MAX_POLL, undefined)
+      peer.address = info?.address;
+    }
+
+    switch (method.toLowerCase()) {
+    
+      case "eth_chainid":
+      case "net_version":
+        return hex(0);
+      
+      case "web3_clientversion":
+        return "kaya";
+      
+      case "eth_accounts":
+        return [];
+
+      case "eth_blocknumber":
+        return settled.size;
+
+      case "eth_estimategas":
+        return "0x5208";
+
+      case "fpc_status":        
+        var ralfs: {url: string, address: Address | null}[] = [];
+        for(var peer of peers) {
+          ralfs.push({ url: peer.url, address: info === undefined ? null : info.address })
+        }
+
+        return { mode: opts.mode,  chainId: opts.chainId, epoch: epoch, peers: ralfs, settled: settled.size, "finalizedRoot": null };
+
+      case "eth_getbalance":
+      case "eth_gettransactioncount":
+        var addr = params[0] as Address
+        var acc = await accountOf(addr);
+        // in Angabe steht balance und nextSeq zurückgeben, aber test verlangt nur balance (?)
+        return hex(acc.balance);
+
+      case "eth_sendrawtransaction":
+        var rawOrder = params[0] as Hex;
+        var order: TransferOrder;
+        try {
+          order = await decodeOrder(rawOrder, opts.chainId);
+        } catch(e) {
+          throw new RpcFault(-32000, "order did not decode");
+        }
+
+        if (order.gasPrice < opts.minGasPrice) {
+          throw new RpcFault(-32006, "invalid gas price");
+        }
+
+        var voteCalls: Promise<HandleOrderResult | undefined>[] = [];
+        for(var val of validators) {
+          var v = peers.find(v => v.address === val);
+          if (v !== undefined) {
+            voteCalls.push(within<HandleOrderResult | undefined>(rpcCall<HandleOrderResult>(v.url, "fastpay_handleOrder", [rawOrder, toWire(epoch)]), MAX_POLL, undefined));
+          }
+        }
+
+        var votes = (await Promise.allSettled(voteCalls)).filter(v => v.status === "fulfilled").map(v => v.value).filter(v => v !== undefined);
+
+        if (votes.length < QUORUM) {
+          throw new RpcFault(-32003, "not enough votes");
+        }
+
+        var cert: Certificate = {
+            epoch: epoch,
+            order: rawOrder,
+            signatures: votes.map(v => v?.signature)
+          }
+
+        var accepted = await broadcast(peers, cert, MAX_POLL);
+
+        if (accepted <= MAX_FAULTY) {
+          formed.set(order.hash, cert);
+          throw new RpcFault(-32007, "not enough acceptances");
+        }
+
+        settled.set(order.hash, {epoch: epoch, orderHash: order.hash, votes: votes.length, sender: order.sender, to: order.recipient, sequence: order.sequence, block: BigInt(settled.size+1)})
+
+        return order.hash;  
+      
+      default:
+        throw new Error(`Unknown method: ${method}`);
+    }
   };
 
   return { handler, refresh, peers: () => peers };

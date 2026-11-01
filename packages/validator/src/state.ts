@@ -194,7 +194,7 @@ export class ValidatorState {
     // is Task 2.
     // TODO(task-1): account
 
-    var acc = this.ledger.get(addr);
+    var acc = this.ledger.get(addr.toLowerCase());
 
     if (acc === undefined) {
       const newAcc: LedgerAccount = {
@@ -249,7 +249,7 @@ export class ValidatorState {
 
     if (this.epoch !== epoch) {
       const reason: RefusalReason = "WRONG_EPOCH";
-      throw new Refusal(reason)
+      throw new Refusal(reason, "expected epoch " + this.epoch + " but was " + epoch)
     }
 
     try {
@@ -265,10 +265,10 @@ export class ValidatorState {
       throw new Refusal(reason)
     }
 
-    var ledger = this.ledger.get(order.sender);
+    var ledger = this.ledger.get(order.sender.toLowerCase());
     if (ledger === undefined || ledger.nextSequence !== order.sequence) {
       const reason: RefusalReason = "INVALID_NONCE";
-      throw new Refusal(reason)
+      throw new Refusal(reason, "expected nounce " + ledger?.nextSequence + " but was " + order.sequence)
     }
 
     if (ledger.balance < (order.amount + order.fee)) {

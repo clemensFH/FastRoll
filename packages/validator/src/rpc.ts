@@ -99,7 +99,17 @@ export function fastpayHandler(state: ValidatorState, signer: Signer): Handler {
       case "handleorder":
         var raw = params[0] as Hex;
         var order = await decodeOrder(raw, state.chainId);
-        await state.check(order, BigInt(params[1] as string));
+        var epoch = 0n;
+        try {
+          epoch = BigInt(params[1] as string);
+        } catch(e) {}
+
+        try {
+          await state.check(order, epoch);
+        }catch(e) {
+          throw new RpcFault(-1, "INSUFFICIENT_BALANCE", e);
+        }
+
         var hash = orderHash(raw);
         var signature = await signer.sign(raw);
 

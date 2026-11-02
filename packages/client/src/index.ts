@@ -303,11 +303,16 @@ export function createClient(opts: ClientOptions) {
         return { mode: opts.mode,  chainId: opts.chainId, epoch: epoch, peers: ralfs, settled: settled.size, "finalizedRoot": null };
 
       case "eth_getbalance":
-      case "eth_gettransactioncount":
         var addr = params[0] as Address
         var acc = await accountOf(addr);
         // in Angabe steht balance und nextSeq zurückgeben, aber test verlangt nur balance (?)
         return hex(acc.balance);
+        
+      case "eth_gettransactioncount":
+        var addr = params[0] as Address
+        var acc = await accountOf(addr);
+        // in Angabe steht balance und nextSeq zurückgeben, aber test verlangt nur nextSeq (?)
+        return hex(acc.nextSequence);
 
       case "eth_sendrawtransaction":
         var rawOrder = params[0] as Hex;
@@ -351,7 +356,11 @@ export function createClient(opts: ClientOptions) {
 
         settled.set(order.hash, {epoch: epoch, orderHash: order.hash, votes: votes.length, sender: order.sender, to: order.recipient, sequence: order.sequence, block: BigInt(settled.size+1)})
 
-        return order.hash;  
+        return order.hash;
+
+        case "eth_gettransactionreceipt":
+
+
 
         // TODO restliche Methoden (siehe Protocol Description)
       

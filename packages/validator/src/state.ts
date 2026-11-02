@@ -199,9 +199,9 @@ export class ValidatorState {
     if (acc === undefined) {
       const newAcc: LedgerAccount = {
         balance: 0n,
-        nextSequence: 1n,
+        nextSequence: 0n,
       }
-      this.ledger.set(addr, newAcc);
+      this.ledger.set(addr.toLowerCase(), newAcc);
 
       return newAcc;
     }
@@ -265,15 +265,15 @@ export class ValidatorState {
       throw new Refusal(reason)
     }
 
-    var ledger = this.ledger.get(order.sender.toLowerCase());
-    if (ledger === undefined || ledger.nextSequence !== order.sequence) {
+    var ledger = this.account(order.sender);
+    if (ledger.nextSequence !== order.sequence) {
       const reason: RefusalReason = "INVALID_NONCE";
       throw new Refusal(reason, "expected nounce " + ledger?.nextSequence + " but was " + order.sequence)
     }
 
     if (ledger.balance < (order.amount + order.fee)) {
       const reason: RefusalReason = "INSUFFICIENT_BALANCE";
-      throw new Refusal(reason)
+      throw new Refusal(reason);
     }
 
     var pending = this.pending.get(order.sender);
@@ -292,7 +292,7 @@ export class ValidatorState {
     // Signed Echo Broadcast, and it is what makes a quorum unable to certify
     // two different orders at one sequence.
     // TODO(task-1): remember
-    this.pending.set(order.sender, order);
+    this.pending.set(order.sender.toLowerCase(), order);
   }
 
   // ------------------------------------------------------------ confirmation
@@ -323,12 +323,8 @@ export class ValidatorState {
     // the batch that carries it.
     // TODO(task-1): confirm
 
-    var senderLedger = this.ledger.get(order.sender);
-    var recvLedger = this.ledger.get(order.recipient);
-
-    if (senderLedger === undefined || recvLedger === undefined) {
-      return;
-    }
+    var senderLedger = this.account(order.sender);
+    var recvLedger = this.account(order.recipient);
 
     var fee = order.fee// * order.gasPrice;
     senderLedger.balance -= (fee + order.amount);
@@ -336,9 +332,9 @@ export class ValidatorState {
 
     recvLedger.balance += order.amount;
 
-    this.ledger.set(order.sender, senderLedger);
-    this.pending.delete(order.sender);
-    this.ledger.set(order.recipient, recvLedger);
+    this.ledger.set(order.sender.toLowerCase(), senderLedger);
+    this.pending.delete(order.sender.toLowerCase());
+    this.ledger.set(order.recipient.toLowerCase(), recvLedger);
   }
 
   /**

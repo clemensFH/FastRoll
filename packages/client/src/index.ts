@@ -36,14 +36,12 @@ import {
   type Certificate,
   type Handler,
   type StateTree,
-  TransferOrder,
-  toWire,
+  type TransferOrder,
   QUORUM,
 } from "@atbt/common";
 
 import { Remembered } from "./remembered.js";
-import { broadcast, drive, HandleOrderResult, identify, NoQuorumError, UnconfirmedError, until, within, type Peer } from "./driver.js";
-import { Refusal, ValidatorInfo } from "@atbt/validator/src/state.js";
+import { broadcast, drive, identify, NoQuorumError, UnconfirmedError, until, within, type Peer } from "./driver.js";
 
 export * from "./driver.js";
 export * from "./remembered.js";
@@ -122,6 +120,9 @@ export function selectBlock<B extends { id: bigint; postStateRoot: Hex }>(
   return !tip && height === 0n ? "genesis" : null;
 }
 
+/** 256 zero bytes, the logsBloom of every receipt and block. */
+const ZERO_BLOOM = ("0x" + "00".repeat(256)) as Hex;
+
 /** Standalone's synthetic block hash: the block number, as 32 bytes. */
 const syntheticBlockHash = (n: bigint): Hex => ("0x" + n.toString(16).padStart(64, "0")) as Hex;
 
@@ -193,7 +194,7 @@ export function createClient(opts: ClientOptions) {
       peers.map((p) =>
         within(
           rpcCall<{ committee: Address[] }>(p.url, "fastpay_info", []).catch(() => null),
-          MAX_POLL,
+          budget,
           null,
         ),
       ),
@@ -203,7 +204,7 @@ export function createClient(opts: ClientOptions) {
   }
 
   /** How long any one question to a validator may take. */
-  const MAX_POLL = opts.pollMs ?? 8000;
+  const budget = opts.pollMs ?? 8000;
 
   async function accountOf(who: Address): Promise<{ balance: bigint; nextSequence: bigint }> {
     if (opts.mode === "anchored") {
@@ -227,7 +228,7 @@ export function createClient(opts: ClientOptions) {
         peers.map((p) =>
           within(
             rpcCall<{ balance: Hex; nextSequence: Hex }>(p.url, "fastpay_accountInfo", [who]).catch(() => null),
-            MAX_POLL,
+            budget,
             null,
           ),
         ),
@@ -268,106 +269,213 @@ export function createClient(opts: ClientOptions) {
     // eth_getTransactionCount read the finalized state replayed from L1,
     // and eth_getBlockByNumber answers about posted batches.
     // TODO(task-1): the cast-compatible surface
-
-    const validators = await committeeOf(epoch);
-
-    for(var peer of peers) {
-      var info = await within<ValidatorInfo | undefined>(rpcCall(peer.url, "fastpay_info", undefined), MAX_POLL, undefined)
-      peer.address = info?.address;
-    }
-
-    switch (method.toLowerCase()) {
-    
-      case "eth_chainid":
+    switch (method) {
+      case "eth_chainId":
       case "net_version":
-        return hex(0);
-      
-      case "web3_clientversion":
-        return "kaya";
-      
+        return hex(opts.chainId);
+
+      case "web3_clientVersion":
+        return "fastroll-client/1.0";
+
       case "eth_accounts":
         return [];
 
-      case "eth_blocknumber":
-        return settled.size;
+      case "eth_gasPrice":
+        return hex(opts.minGasPrice);
 
-      case "eth_estimategas":
-        return "0x5208";
+      case "eth_estimateGas":
+        return hex(GAS_PER_TX);
 
-      case "fpc_status":        
-        var ralfs: {url: string, address: Address | null}[] = [];
-        for(var peer of peers) {
-          ralfs.push({ url: peer.url, address: info === undefined ? null : info.address })
-        }
+      case "eth_feeHistory":
+      case "eth_maxPriorityFeePerGas":
+        throw new RpcFault(-32004, `${method} is not supported: FastRoll only takes legacy transactions, use --legacy`);
 
-        return { mode: opts.mode,  chainId: opts.chainId, epoch: epoch, peers: ralfs, settled: settled.size, "finalizedRoot": null };
+      case "eth_getBalance": {
+        const { balance } = await accountOf(params[0] as Address);
+        // Ethereum tools read the balance as unsigned.
+        return hex(balance < 0n ? 0n : balance);
+      }
 
-      case "eth_getbalance":
-        var addr = params[0] as Address
-        var acc = await accountOf(addr);
-        // in Angabe steht balance und nextSeq zurückgeben, aber test verlangt nur balance (?)
-        return hex(acc.balance);
-        
-      case "eth_gettransactioncount":
-        var addr = params[0] as Address
-        var acc = await accountOf(addr);
-        // in Angabe steht balance und nextSeq zurückgeben, aber test verlangt nur nextSeq (?)
-        return hex(acc.nextSequence);
+      case "eth_getTransactionCount":
+        return hex((await accountOf(params[0] as Address)).nextSequence);
 
-      case "eth_sendrawtransaction":
-        var rawOrder = params[0] as Hex;
-        var order: TransferOrder;
-        try {
-          order = await decodeOrder(rawOrder, opts.chainId);
-        } catch(e) {
-          throw new RpcFault(-32000, "order did not decode");
-        }
+      case "eth_sendRawTransaction":
+        return sendRaw(params[0] as Hex);
 
-        if (order.gasPrice < opts.minGasPrice) {
-          throw new RpcFault(-32006, "invalid gas price");
-        }
+      case "eth_getTransactionReceipt": {
+        const s = settled.peek(params[0] as Hex);
+        if (!s) return null;
+        return {
+          transactionHash: s.orderHash,
+          transactionIndex: "0x0",
+          blockNumber: hex(s.block),
+          blockHash: syntheticBlockHash(s.block),
+          from: s.sender,
+          to: s.to,
+          cumulativeGasUsed: hex(GAS_PER_TX),
+          gasUsed: hex(GAS_PER_TX),
+          effectiveGasPrice: hex(opts.minGasPrice),
+          contractAddress: null,
+          logs: [],
+          logsBloom: ZERO_BLOOM,
+          status: "0x1",
+          type: "0x0",
+        };
+      }
 
-        var voteCalls: Promise<HandleOrderResult | undefined>[] = [];
-        for(var val of validators) {
-          var v = peers.find(v => v.address === val);
-          if (v !== undefined) {
-            voteCalls.push(within<HandleOrderResult | undefined>(rpcCall<HandleOrderResult>(v.url, "fastpay_handleOrder", [rawOrder, toWire(epoch)]), MAX_POLL, undefined));
-          }
-        }
+      case "eth_blockNumber":
+        return hex(settledCount);
 
-        var votes = (await Promise.allSettled(voteCalls)).filter(v => v.status === "fulfilled").map(v => v.value).filter(v => v !== undefined);
+      case "eth_getBlockByNumber": {
+        const tag = params[0];
+        let n: bigint;
+        if (tag === undefined || ["latest", "pending", "safe", "finalized"].includes(tag as string)) n = BigInt(settledCount);
+        else if (tag === "earliest") n = 0n;
+        else n = BigInt(tag as string);
+        return n <= BigInt(settledCount) ? syntheticBlock(n) : null;
+      }
 
-        if (votes.length < QUORUM) {
-          throw new RpcFault(-32003, "not enough votes");
-        }
+      case "eth_getBlockByHash": {
+        const n = BigInt(params[0] as Hex);
+        return n <= BigInt(settledCount) && syntheticBlockHash(n) === (params[0] as string).toLowerCase()
+          ? syntheticBlock(n)
+          : null;
+      }
 
-        var cert: Certificate = {
-            epoch: epoch,
-            order: rawOrder,
-            signatures: votes.map(v => v?.signature)
-          }
+      case "fpc_status":
+        await identified();
+        return {
+          mode: opts.mode,
+          chainId: opts.chainId,
+          epoch,
+          peers: peers.map((p) => ({ url: p.url, address: p.address ?? null })),
+          settled: settledCount,
+          finalizedRoot: finalized ? finalized.root() : null,
+        };
 
-        var accepted = await broadcast(peers, cert, MAX_POLL);
-
-        if (accepted <= MAX_FAULTY) {
-          formed.set(order.hash, cert);
-          throw new RpcFault(-32007, "not enough acceptances");
-        }
-
-        settled.set(order.hash, {epoch: epoch, orderHash: order.hash, votes: votes.length, sender: order.sender, to: order.recipient, sequence: order.sequence, block: BigInt(settled.size+1)})
-
-        return order.hash;
-
-        case "eth_gettransactionreceipt":
-
-
-
-        // TODO restliche Methoden (siehe Protocol Description)
-      
       default:
-        throw new Error(`Unknown method: ${method}`);
+        throw new RpcFault(-32601, `method not found: ${method}`);
     }
   };
+
+  /** Blocks settled so far: block n is the n-th settled order. */
+  let settledCount = 0;
+
+  function syntheticBlock(n: bigint) {
+    const Z32 = ("0x" + "00".repeat(32)) as Hex;
+    return {
+      number: hex(n),
+      hash: syntheticBlockHash(n),
+      parentHash: syntheticBlockHash(n === 0n ? 0n : n - 1n),
+      nonce: "0x0000000000000000",
+      sha3Uncles: "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      logsBloom: ZERO_BLOOM,
+      transactionsRoot: Z32,
+      stateRoot: Z32,
+      receiptsRoot: Z32,
+      miner: "0x0000000000000000000000000000000000000000",
+      difficulty: "0x0",
+      totalDifficulty: "0x0",
+      extraData: "0x",
+      size: "0x0",
+      gasLimit: "0x1c9c380",
+      gasUsed: "0x0",
+      timestamp: hex(Math.floor(Date.now() / 1000)),
+      transactions: [],
+      uncles: [],
+      mixHash: Z32,
+    };
+  }
+
+  /** Identify the peers once, and again only while some are still unknown. */
+  let identifying: Promise<unknown> | null = null;
+  function identified(): Promise<unknown> {
+    if (peers.some((p) => !p.address) && !identifying) {
+      identifying = identify(peers).finally(() => (identifying = null));
+    }
+    return identifying ?? Promise.resolve();
+  }
+
+  /** The committee is fixed in standalone mode, so it is asked for once. */
+  let standaloneCommittee: Address[] | null = null;
+  async function committeeNow(): Promise<Address[]> {
+    if (l1) return committeeOf(epoch);
+    if (!standaloneCommittee) {
+      const c = await committeeOf(epoch);
+      if (c.length > 0) standaloneCommittee = c;
+      return c;
+    }
+    return standaloneCommittee;
+  }
+
+  async function sendRaw(raw: Hex): Promise<Hex> {
+    let order: TransferOrder;
+    try {
+      order = await decodeOrder(raw, opts.chainId);
+    } catch (e) {
+      throw new RpcFault(-32000, `order does not decode: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (order.gasPrice < opts.minGasPrice) {
+      throw new RpcFault(-32006, `gas price ${order.gasPrice} is below this client's minimum ${opts.minGasPrice}`, {
+        gasPrice: order.gasPrice,
+        minGasPrice: opts.minGasPrice,
+      });
+    }
+
+    if (l1) await refresh();
+
+    // Already settled in this epoch: answer with the same hash, send nothing.
+    if (settled.get(order.hash, epoch)) return order.hash;
+
+    const settle = (votes: number) => {
+      settledCount += 1;
+      settled.set(order.hash, {
+        orderHash: order.hash,
+        sender: order.sender,
+        sequence: order.sequence,
+        to: order.recipient,
+        votes,
+        epoch,
+        block: BigInt(settledCount),
+      });
+      formed.delete(order.hash);
+    };
+    const tooFew = (confirmed: number, cert: Certificate) => {
+      formed.set(order.hash, cert);
+      return new RpcFault(-32007, `certificate formed, but only ${confirmed} validators accepted it`, {
+        confirmed,
+        needed: MAX_FAULTY + 1,
+      });
+    };
+
+    // A certificate formed earlier but taken by too few: rebroadcast it, since
+    // validators that applied it would now refuse a fresh vote.
+    const earlier = formed.get(order.hash, epoch);
+    if (earlier) {
+      const confirmed = await broadcast(peers, earlier, budget);
+      if (confirmed <= MAX_FAULTY) throw tooFew(confirmed, earlier);
+      settle(earlier.signatures.length);
+      log(`settled ${order.hash} on rebroadcast (${confirmed} accepted)`);
+      return order.hash;
+    }
+
+    const committee = await committeeNow();
+    try {
+      const r = await drive(peers, raw, opts.chainId, epoch, committee, opts.proverUrl, budget);
+      settle(r.votes);
+      log(`settled ${order.hash}: ${r.votes} votes, ${r.confirmed} accepted`);
+      return order.hash;
+    } catch (e) {
+      if (e instanceof NoQuorumError) {
+        throw new RpcFault(-32003, e.message, { votes: e.votes, quorum: QUORUM, refusals: e.refusals });
+      }
+      if (e instanceof UnconfirmedError) throw tooFew(e.confirmed, e.certificate);
+      throw e;
+    }
+  }
+
+  // Ask the peers who they are as soon as the client starts.
+  void identified();
 
   return { handler, refresh, peers: () => peers };
 }

@@ -10,29 +10,23 @@
  * that is not one round trip. The user signs a legacy transaction, this drives
  * everything after it, and the transaction hash comes back as usual.
  */
-import type { Address, Hash, Hex } from "viem";
+import type { Address, Hex } from "viem";
 import {
   COMMITTEE_SIZE,
   MAX_FAULTY,
   QUORUM,
-  RpcFault,
   decodeOrder,
   recoverVoter,
   rpcCall,
   type Certificate,
   type TransferOrder,
 } from "@atbt/common";
-import { rpc } from "viem/utils";
-import { type } from "node:os";
 
-// to store Peer infos ?
-// import { Level } from "level";
-// const db = new Level<string, any>("./peer_data");
 
 export interface Peer {
   url: string;
   /** Filled in from fastpay_info, so a misconfigured peer list is visible. */
-  address?: Address; // pub Key
+  address?: Address;
 }
 
 export interface DriveResult {
@@ -83,33 +77,6 @@ export class UnconfirmedError extends Error {
     );
   }
 }
-
-interface RpcSuccessResult {}
-
-export interface HandleCertResult extends RpcSuccessResult {
-    readonly ok: boolean,
-    readonly signers: Address[],
-    readonly pooled: number,
-    readonly orderHash: Hash
-}
-
-interface PeerData extends RpcSuccessResult {
-  name: string,
-  address: Address,
-  mode: "standalone" | "anchored",
-  chainId: number,
-  epoch: Hex,
-  committee: Address[],
-}
-
-export interface HandleOrderResult extends RpcSuccessResult {
-  readonly validator: Address,
-  readonly epoch: Hex,
-  readonly orderHash: Hash,
-  readonly signature: Hex,
-}
-
-type RpcResult = RpcSuccessResult | RpcFault | undefined;
 
 /**
  * Wait for `p`, or for `ms`, whichever is first.
@@ -169,7 +136,7 @@ function reasonOf(e: unknown): string {
  */
 export async function drive(
   peers: Peer[],
-  raw: Hex,         // order as raw byte data
+  raw: Hex,
   chainId: number,
   epoch: bigint,
   committee: readonly Address[],
@@ -208,50 +175,65 @@ export async function drive(
   // exactly when a validator signed two conflicting orders. A prover being
   // down must never stop a payment.
   // TODO(task-1): drive
+  const order = await decodeOrder(raw, chainId);
+  const members = new Set(committee.map((a) => a.toLowerCase()));
 
-  // brocast to committee
+  // One accepted vote per committee member, keyed by the RECOVERED signer:
+  // a peer's own claim of who it is proves nothing.
+  const votes = new Map<string, Hex>();
+  const refusals: { url: string; reason: string }[] = [];
 
-  const calls = committee.flatMap(v => within<RpcResult>(rpcCall<RpcResult>(v, "fastpay_handleOrder", [raw, epoch]), pollMs, undefined));
-  
-  let responses = await until<RpcResult>(calls, hasEnoughVotes);
-
-  // form transfer certificate
-
-  let acceptances = responses.filter(r => r !== undefined && !(r instanceof RpcFault)).map(r => r as HandleOrderResult);
-  let refusals = responses.filter(r => r instanceof RpcFault).map(r => r as RpcFault).map(r => ({url: "woher?", reason: reasonOf(r)}));
-  let order = await decodeOrder(raw, chainId);
-  let votes = [...(new Set<Address>(acceptances.map(a => a.validator)))].filter(v => committee.includes(v)).length;
-
-  //recoverVoter(chainId, epoch, order, )
-
-  if (votes < QUORUM) {
-    throw new NoQuorumError(order, votes, refusals);
-  }
-
-  const certificate: Certificate = {
-    epoch: epoch,
-    order: raw,
-    signatures: acceptances.map(a => a.signature),
+  const ask = async (peer: Peer): Promise<void> => {
+    let answer: { signature?: Hex } | null;
+    try {
+      answer = await within(
+        rpcCall<{ signature?: Hex }>(peer.url, "fastpay_handleOrder", [raw, epoch]),
+        pollMs,
+        null,
+      );
+    } catch (e) {
+      refusals.push({ url: peer.url, reason: reasonOf(e) });
+      return;
+    }
+    if (!answer) {
+      refusals.push({ url: peer.url, reason: `no answer within ${pollMs} ms` });
+      return;
+    }
+    const sig = answer.signature;
+    if (typeof sig !== "string") {
+      refusals.push({ url: peer.url, reason: "answer carried no signature" });
+      return;
+    }
+    // Report every vote, valid for this order or not, to the prover (Task 3).
+    // Fire and forget: a prover being down never stops a payment.
+    if (proverUrl) {
+      void within(rpcCall(proverUrl, "prover_observeVote", [epoch, raw, sig]), pollMs, null).catch(() => {});
+    }
+    let who: Address;
+    try {
+      who = await recoverVoter(chainId, epoch, raw, sig);
+    } catch (e) {
+      refusals.push({ url: peer.url, reason: `bad signature: ${reasonOf(e)}` });
+      return;
+    }
+    if (!members.has(who.toLowerCase())) {
+      refusals.push({ url: peer.url, reason: `signer ${who} is not in the committee` });
+      return;
+    }
+    if (!votes.has(who.toLowerCase())) votes.set(who.toLowerCase(), sig);
   };
 
-  let confCount = await broadcast(peers, certificate);
-  if (confCount < QUORUM) {
-    throw new UnconfirmedError(order, confCount, certificate);
-  }
+  // Ask every peer at once and stop waiting as soon as a quorum of distinct
+  // members has voted; the stragglers carry on unwaited.
+  await until(peers.map(ask), () => votes.size >= QUORUM);
 
-  const driveResult: DriveResult = {
-    order: order,
-    certificate: certificate,
-    votes: votes,
-    refusals: refusals,
-    confirmed: confCount,
-  };
+  if (votes.size < QUORUM) throw new NoQuorumError(order, votes.size, [...refusals]);
 
-  return driveResult;
-}
+  const certificate: Certificate = { epoch, order: raw, signatures: [...votes.values()].slice(0, COMMITTEE_SIZE) };
+  const confirmed = await broadcast(peers, certificate, pollMs);
+  if (confirmed <= MAX_FAULTY) throw new UnconfirmedError(order, confirmed, certificate);
 
-function hasEnoughVotes(currentsVotes: RpcResult[]): boolean {
-  return currentsVotes.filter(v => v !== undefined).length >= QUORUM;
+  return { order, certificate, votes: votes.size, refusals: [...refusals], confirmed };
 }
 
 /**
@@ -267,19 +249,17 @@ export async function broadcast(peers: Peer[], certificate: Certificate, pollMs 
   // n - f = 5 have accepted, or all have answered; the rest may carry on
   // unwaited.
   // TODO(task-1): broadcast
-
-  let calls: Promise<RpcResult>[] = [];
-  for (var peer of peers) {
-    calls.push(within<RpcResult>(rpcCall<RpcResult>(peer.url, "fastpay_handleCertificate", [certificate]), pollMs, undefined));
-  }
-
-  let responses = await until<RpcResult>(calls, hasEnoughOKs);
-
-  return responses.filter(i => i !== undefined && !(i instanceof RpcFault) && (i as HandleCertResult).ok).length;
-}
-
-function hasEnoughOKs(currentsResults: RpcResult[]): boolean{
-  return currentsResults.filter(i => i !== undefined && !(i instanceof RpcFault) && (i as HandleCertResult)).length >= QUORUM;
+  let accepted = 0;
+  const send = async (peer: Peer): Promise<void> => {
+    const r = await within(
+      rpcCall<{ ok?: boolean }>(peer.url, "fastpay_handleCertificate", [certificate]).catch(() => null),
+      pollMs,
+      null,
+    );
+    if (r && r.ok === true) accepted++;
+  };
+  await until(peers.map(send), () => accepted >= QUORUM);
+  return accepted;
 }
 
 const POLL_TIMEOUT_MS = 8000;
@@ -290,17 +270,15 @@ export async function identify(peers: Peer[]): Promise<Peer[]> {
   // addresses. One unreachable peer must not lose the others: keep what you
   // knew about it rather than dropping it.
   // TODO(task-1): identify
-
-  for (const peer of peers) {
-    var res = await within<unknown>(rpcCall<PeerData>(peer.url, "fastpay_info"), POLL_TIMEOUT_MS, undefined);
-    if(res !== undefined) {
-
-      // TODO save to DB (?)
-
-      // update address
-      peer.address = (res as PeerData).address;
-    }
-  }
-
+  await Promise.all(
+    peers.map(async (peer) => {
+      const info = await within(
+        rpcCall<{ address?: Address }>(peer.url, "fastpay_info", []).catch(() => null),
+        POLL_TIMEOUT_MS,
+        null,
+      );
+      if (info && typeof info.address === "string") peer.address = info.address;
+    }),
+  );
   return peers;
 }

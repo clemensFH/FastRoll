@@ -1,0 +1,11 @@
+packages:
+  - 'packages/*'
+
+# esbuild fetches its binary in an install script, and recent pnpm refuses to
+# install until such scripts are approved. pnpm 12 reads allowBuilds, older
+# pnpm 10 releases read onlyBuiltDependencies, so both are kept. Tested with
+# pnpm 10.34 and 12.9. Ships in every skeleton.
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild

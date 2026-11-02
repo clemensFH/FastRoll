@@ -24,7 +24,6 @@
     "@atbt/malicious": "workspace:*",
     "@atbt/prover": "workspace:*",
     "@atbt/validator": "workspace:*",
-    "level": "^10.0.0",
     "viem": "^2"
   }
 }

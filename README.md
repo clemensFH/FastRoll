@@ -150,3 +150,22 @@ A prover you have never shown fraud is a prover you have not tested.
 `forge test` and `pnpm test` are the public pass bar and they are not the whole grade.
 On the Rust track, `cargo test` in `rust/` runs the same conformance vectors against `rust/common`.
 Grading runs automated integration and end-to-end tests against your running processes and your deployed contracts, and never imports your code: the processes are graded over the wire, and from Task 2 on the Gateway is deployed with its frozen constructor and driven only through `IGateway`.
+
+> **Hinweis: Windows / Intel / AMD (amd64)**
+>
+> Das Image `atbt-byzantine:course` ist nur für `linux/arm64` (Apple Silicon) gebaut. Auf einem amd64-Rechner
+> scheitern alle Szenarien mit byzantinischen Validatoren mit `exec /usr/local/bin/atbt-byzantine: exec format error`.
+> Abhilfe: einmal den ARM-Emulator (QEMU) in Docker registrieren:
+>
+> ```bash
+> docker run --privileged --rm tonistiigi/binfmt --install arm64
+> ```
+>
+> Prüfen, ob es aktiv ist (muss `aarch64` ausgeben):
+>
+> ```bash
+> docker run --rm --platform linux/arm64 alpine uname -m
+> ```
+>
+> Die Registrierung geht bei jedem Neustart von Docker Desktop oder Windows verloren, dann den Befehl erneut ausführen.
+> Auf Macs mit Apple Silicon ist nichts zu tun.

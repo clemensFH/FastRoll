@@ -52,7 +52,6 @@ export class Refusal extends Error {
 }
 
 /** Signed balance, because standalone mode permits temporary negatives. */
-// mapped to address
 interface LedgerAccount {
   balance: bigint;
   nextSequence: bigint;
@@ -73,14 +72,14 @@ export interface ValidatorInfo {
   address: Address;
   mode: Mode;
   chainId: number;
-  epoch : bigint;
+  epoch: bigint;
   committee: Address[];
 }
 
 export interface AccountInfo extends LedgerAccount {
-  address: Address,
-  pending: TransferOrder | undefined,
-  vote: { epoch: bigint; signature: Hex } | undefined,
+  address: Address;
+  pending: TransferOrder | undefined;
+  vote: { epoch: bigint; signature: Hex } | undefined;
 }
 
 export class ValidatorState {
@@ -93,7 +92,6 @@ export class ValidatorState {
   tree: StateTree | null = null;
   /** Standalone: this validator's own view. Anchored: unused. */
   private ledger = new Map<string, LedgerAccount>();
-                      //  address?
 
   /**
    * The last order this validator signed per account, awaiting confirmation.
@@ -107,7 +105,6 @@ export class ValidatorState {
    * it clears at every epoch boundary because the votes it protected expired.
    */
   private pending = new Map<string, TransferOrder>();
-                        // address?
 
   epoch = 0n;
   committee: Address[] = [];
@@ -151,15 +148,12 @@ export class ValidatorState {
     this.address = cfg.address;
     if (cfg.committee) this.committee = cfg.committee;
     for (const g of cfg.genesis ?? []) {
-      this.ledger.set(g.address.toLowerCase(), {
-        balance: g.balance,
-        nextSequence: 0n
-      });
+      this.ledger.set(key(g.address), { balance: g.balance, nextSequence: 0n });
     }
   }
 
   getInfo(): ValidatorInfo {
-    var info: ValidatorInfo = {
+    return {
       name: this.name,
       address: this.address,
       mode: this.mode,
@@ -167,23 +161,18 @@ export class ValidatorState {
       epoch: this.epoch,
       committee: this.committee,
     };
-    return info;
   }
 
-  getAccountInfo(account: Address): AccountInfo {
-    var ledger = this.account(account);
-    var pendingOrder = this.pending.get(account);
-    var vote = this.votes.get(account);
-
-    var info: AccountInfo = {
-      address: account,
-      balance: ledger.balance,
-      nextSequence: ledger.nextSequence,
-      pending: pendingOrder,
-      vote: vote,
-    }
-
-    return info;
+  /** One account together with this validator's pending order and own vote on it. */
+  getAccountInfo(addr: Address): AccountInfo {
+    const acc = this.account(addr);
+    return {
+      address: getAddress(addr),
+      balance: acc.balance,
+      nextSequence: acc.nextSequence,
+      pending: this.pendingOf(addr),
+      vote: this.votes.get(key(addr)),
+    };
   }
 
   // ------------------------------------------------------------- account view
@@ -193,38 +182,35 @@ export class ValidatorState {
     // been seen. In ANCHORED mode this reads the replayed tree instead, which
     // is Task 2.
     // TODO(task-1): account
+    //
+    // A read never creates an account: otherwise every balance query for a
+    // random address would grow the ledger (and vapi_info's knownAccounts).
+    const acc = this.ledger.get(key(addr));
+    return acc ? { ...acc } : { balance: 0n, nextSequence: 0n };
+  }
 
-    var acc = this.ledger.get(addr.toLowerCase());
-
-    if (acc === undefined) {
-      const newAcc: LedgerAccount = {
-        balance: 0n,
-        nextSequence: 0n,
-      }
-      this.ledger.set(addr.toLowerCase(), newAcc);
-
-      return newAcc;
+  /** The stored account, created on first write. */
+  private mutableAccount(addr: Address): LedgerAccount {
+    const k = key(addr);
+    let acc = this.ledger.get(k);
+    if (!acc) {
+      acc = { balance: 0n, nextSequence: 0n };
+      this.ledger.set(k, acc);
     }
-
     return acc;
   }
 
   pendingOf(addr: Address): TransferOrder | undefined {
     // The pending slot for one sender, if it holds anything.
     // TODO(task-1): pendingOf
-
-    return this.pending.get(addr);
+    return this.pending.get(key(addr));
   }
 
   allPending(): { account: Address; order: TransferOrder }[] {
     // Every pending order. `vapi_pending` publishes this, and so does the
     // prover's evidence gathering.
     // TODO(task-1): allPending
-    var res: {account: Address, order: TransferOrder}[] = [];
-
-    this.pending.forEach((order, addr) => {res.push({account: getAddress(addr, this.chainId), order: order})})
-
-    return res;
+    return [...this.pending.values()].map((order) => ({ account: getAddress(order.sender), order }));
   }
 
   // ------------------------------------------------------------ the five checks
@@ -246,53 +232,44 @@ export class ValidatorState {
     // Throw `Refusal` with a typed reason. A client that has to parse English
     // to know whether to retry will get it wrong.
     // TODO(task-1): check
+    //
+    // Order of the checks is the spec's "Which refusal reason applies first".
+    // INVALID_FORMAT (rule 1) is raised by the caller, where decoding happens.
 
-    if (this.epoch !== epoch) {
-      const reason: RefusalReason = "WRONG_EPOCH";
-      throw new Refusal(reason, "expected epoch " + this.epoch + " but was " + epoch)
+    if (epoch !== this.epoch) {
+      throw new Refusal("WRONG_EPOCH", `asked for epoch ${epoch}, this validator is in ${this.epoch}`);
     }
 
-    try {
-      await decodeOrder(order.raw, this.chainId)
-    }
-    catch (error) {
-      const reason: RefusalReason = "INVALID_FORMAT";
-      throw new Refusal(reason)
-    }
-    
+    // A zero withdrawal already fails to decode, so this only catches transfers.
     if (order.amount <= 0n) {
-      const reason: RefusalReason = "ZERO_AMOUNT";
-      throw new Refusal(reason)
+      throw new Refusal("ZERO_AMOUNT");
     }
 
-    var ledger = this.account(order.sender);
-    if (ledger.nextSequence !== order.sequence) {
-      const reason: RefusalReason = "INVALID_NONCE";
-      throw new Refusal(reason, "expected nounce " + ledger?.nextSequence + " but was " + order.sequence)
+    const acc = this.account(order.sender);
+    if (order.sequence !== acc.nextSequence) {
+      throw new Refusal("INVALID_NONCE", `expected nonce ${acc.nextSequence}, got ${order.sequence}`);
     }
 
-    if (ledger.balance < (order.amount + order.fee)) {
-      const reason: RefusalReason = "INSUFFICIENT_BALANCE";
-      throw new Refusal(reason);
+    if (acc.balance < order.amount + order.fee) {
+      throw new Refusal("INSUFFICIENT_BALANCE", `balance ${acc.balance} < ${order.amount + order.fee}`);
     }
 
-    var pending = this.pending.get(order.sender);
-    if (pending !== undefined && pending.raw !== order.raw) {
-      const reason: RefusalReason = "CONFLICTING_PENDING";
-      throw new Refusal(reason)
+    // Signed Echo Broadcast on the label (sender, nextSequence): at most one
+    // order per label, but a byte-identical re-send is fine.
+    const pending = this.pendingOf(order.sender);
+    if (pending && pending.raw.toLowerCase() !== order.raw.toLowerCase()) {
+      throw new Refusal("CONFLICTING_PENDING", `already signed ${pending.hash} at nonce ${order.sequence}`);
     }
-
-    this.pending.set(order.sender, order);
-
   }
 
   /** Record that we voted for this order. Idempotent for a re-send. */
-  remember(order: TransferOrder): void {
+  remember(order: TransferOrder, vote?: { epoch: bigint; signature: Hex }): void {
     // Take the pending slot for this sender's sequence. This is the echo in
     // Signed Echo Broadcast, and it is what makes a quorum unable to certify
     // two different orders at one sequence.
     // TODO(task-1): remember
-    this.pending.set(order.sender.toLowerCase(), order);
+    this.pending.set(key(order.sender), order);
+    if (vote) this.votes.set(key(order.sender), vote);
   }
 
   // ------------------------------------------------------------ confirmation
@@ -308,8 +285,12 @@ export class ValidatorState {
    * ANCHORED: state does NOT move. It moves when the certificate is posted to
    * L1 and the replay advances. All this does is pool the certificate for
    * posting and remember that the sequence is spoken for.
+   *
+   * Returns "applied" when state moved and "repeat" for a nonce that was
+   * already applied. Throws `AheadOfLedger` when earlier certificates are
+   * missing. The certificate must already have been verified.
    */
-  confirm(cert: Certificate, order: TransferOrder): void {
+  confirm(cert: Certificate, order: TransferOrder): "applied" | "repeat" {
     // A certificate arrived.
     //
     // In STANDALONE mode this is where state moves: debit the sender by
@@ -322,19 +303,30 @@ export class ValidatorState {
     // certificate is pooled for posting and the state moves when L1 accepts
     // the batch that carries it.
     // TODO(task-1): confirm
+    void cert;
 
-    var senderLedger = this.account(order.sender);
-    var recvLedger = this.account(order.recipient);
+    const sender = this.mutableAccount(order.sender);
 
-    var fee = order.fee// * order.gasPrice;
-    senderLedger.balance -= (fee + order.amount);
-    senderLedger.nextSequence++;
+    // Already applied: a repeat, answered ok without changing anything. This
+    // also covers a DIFFERENT valid certificate at an applied nonce, which can
+    // only exist if more than f validators misbehaved.
+    if (order.sequence < sender.nextSequence) return "repeat";
 
-    recvLedger.balance += order.amount;
+    // Earlier certificates are missing; orders apply strictly in nonce order.
+    if (order.sequence > sender.nextSequence) throw new AheadOfLedger(sender.nextSequence);
 
-    this.ledger.set(order.sender.toLowerCase(), senderLedger);
-    this.pending.delete(order.sender.toLowerCase());
-    this.ledger.set(order.recipient.toLowerCase(), recvLedger);
+    // No balance check: a certified order is applied whatever the balance.
+    sender.balance -= order.amount + order.fee;
+    sender.nextSequence += 1n;
+    this.pending.delete(key(order.sender));
+    this.votes.delete(key(order.sender));
+
+    // A transfer credits the recipient without touching its nonce. A
+    // withdrawal credits nobody here: amount and fee are burned (Task 1).
+    if (order.kind === "transfer") {
+      this.mutableAccount(order.recipient).balance += order.amount;
+    }
+    return "applied";
   }
 
   /**
@@ -396,12 +388,23 @@ export class ValidatorState {
   accounts(): Address[] {
     // Every address this validator knows about.
     // TODO(task-1): accounts
-    var addresses: Address[] = [];
-    this.ledger.forEach((acc, addr) => {addresses.push(getAddress(addr, this.chainId))})
-    return addresses;
+    return [...this.ledger.keys()].map((k) => getAddress(k));
   }
 
 
+}
+
+/** Ledger, pending and vote maps are keyed by the lowercase address, so a
+ *  checksummed and a lowercase spelling of one account are the same account. */
+function key(addr: Address | string): string {
+  return addr.toLowerCase();
+}
+
+/** A certificate for a nonce this validator has not reached yet (-32008). */
+export class AheadOfLedger extends Error {
+  constructor(readonly nextSequence: bigint) {
+    super(`certificate is ahead of this validator; next sequence is ${nextSequence}`);
+  }
 }
 
 /** The key of one signed sequence in `ValidatorState.signed`. */

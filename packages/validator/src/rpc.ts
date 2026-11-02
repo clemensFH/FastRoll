@@ -9,23 +9,19 @@
  * drives it. It can make a validator sync or post now, which is exactly why it
  * must not be reachable from another machine.
  */
-import { getAddress, type Address, type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import {
   RpcFault,
-  paramAddress,
   decodeOrder,
-  type TransferOrder,
   fromWire,
   verifyCertificate,
   voteDigest,
   type Certificate,
   type Handler,
-  orderHash,
-  decodeCertData,
+  type TransferOrder,
 } from "@atbt/common";
 
-import { Refusal, ValidatorInfo, type ValidatorState } from "./state.js";
-import { HandleOrderResult, HandleCertResult } from "@atbt/client";
+import { AheadOfLedger, Refusal, type RefusalReason, type ValidatorState } from "./state.js";
 
 export interface Signer {
   address: Address;
@@ -72,6 +68,20 @@ function orderWire(o: { raw: Hex; hash: Hex; sender: Address; sequence: bigint; 
   };
 }
 
+/** -32001 with the typed reason, the one shape every refusal goes out in. */
+function refuse(reason: RefusalReason, message?: string): RpcFault {
+  return new RpcFault(-32001, message ?? reason, { reason });
+}
+
+/** Decode an order, or refuse with INVALID_FORMAT. */
+async function decodeOrRefuse(raw: Hex, chainId: number): Promise<TransferOrder> {
+  try {
+    return await decodeOrder(raw, chainId);
+  } catch (e) {
+    throw refuse("INVALID_FORMAT", `INVALID_FORMAT: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /** The protocol interface. */
 export function fastpayHandler(state: ValidatorState, signer: Signer): Handler {
   // fastpay_info, handleOrder, handleCertificate, accountInfo.
@@ -85,68 +95,84 @@ export function fastpayHandler(state: ValidatorState, signer: Signer): Handler {
   // accountInfo publishes `pending` with this validator's own vote on it, so
   // a challenger can collect votes by asking rather than waiting to be told.
   // TODO(task-1): the fastpay_ surface
-  
-  return async (method: string, params: unknown[]) => {
-    console.log("testfastpay");
-    switch (method.toLowerCase().split("_")[1]) {
+  //
+  // Parameters reach this handler already checked against FASTPAY_PARAMS
+  // (serveRpc does that), so only the protocol rules are judged here.
 
-      case "info":
+  return async (method: string, params: unknown[]) => {
+    switch (method) {
+      case "fastpay_info":
         return state.getInfo();
 
-      case "accountinfo":
-        return state.getAccountInfo(params[0] as Address);
+      case "fastpay_accountInfo": {
+        const info = state.getAccountInfo(params[0] as Address);
+        return {
+          address: info.address,
+          balance: info.balance,
+          nextSequence: info.nextSequence,
+          pending: info.pending
+            ? {
+                ...orderWire(info.pending),
+                epoch: info.vote?.epoch ?? null,
+                signature: info.vote?.signature ?? null,
+              }
+            : null,
+        };
+      }
 
-      case "handleorder":
-        var raw = params[0] as Hex;
-        var order = await decodeOrder(raw, state.chainId);
-        var epoch = 0n;
-        try {
-          epoch = BigInt(params[1] as string);
-        } catch(e) {}
+      case "fastpay_handleOrder": {
+        const raw = params[0] as Hex;
+        const epoch = params[1] === undefined ? state.epoch : fromWire(params[1]);
 
+        // Rule 1: the order must decode (signature, chain id, legacy, ...).
+        const order = await decodeOrRefuse(raw, state.chainId);
+        // Rules 2 to 6.
         try {
           await state.check(order, epoch);
-        }catch(e) {
-          throw new RpcFault(-1, "INSUFFICIENT_BALANCE", e);
+        } catch (e) {
+          if (e instanceof Refusal) throw refuse(e.reason, e.message);
+          throw e;
         }
 
-        var hash = orderHash(raw);
-        var signature = await signer.sign(raw);
+        // The vote is a signature over the vote digest, which binds chain,
+        // epoch and order. RFC 6979 makes a re-send return the same bytes.
+        const signature = await signer.sign(voteDigest(state.chainId, epoch, raw));
+        state.remember(order, { epoch, signature });
+        return { validator: signer.address, epoch, orderHash: order.hash, signature };
+      }
 
-        var result: HandleOrderResult = {
-          validator: state.address,
-          epoch: `0x${state.epoch}`,
-          orderHash: hash,
-          signature: signature,
+      case "fastpay_handleCertificate": {
+        // 1. Shape (-32602).
+        const cert = readCert(params[0]);
+        // 2. The order decodes (-32001 INVALID_FORMAT).
+        const order = await decodeOrRefuse(cert.order, state.chainId);
+        // 3. Epoch (-32002).
+        if (cert.epoch !== state.epoch) {
+          throw new RpcFault(-32002, `certificate is for epoch ${cert.epoch}, this validator is in ${state.epoch}`);
         }
-
-        return result;
-
-      case "handlecertificate":
-        var cert = readCert(params[0] as Hex)
-        var order = await decodeOrder(cert.order, state.chainId);
-        state.confirm(cert, order);
-
-        var res: HandleCertResult = {
-          ok: true,
-          signers: cert.signatures,
-          pooled: 0,
-          orderHash: orderHash(cert.order),
+        // 4. Five to seven distinct committee members (-32002).
+        let signers: Address[];
+        try {
+          signers = await verifyCertificate(cert, state.chainId, state.committee);
+        } catch (e) {
+          throw new RpcFault(-32002, `invalid certificate: ${e instanceof Error ? e.message : String(e)}`);
         }
-
-        return res;
+        // 5. The nonce (-32008 when earlier certificates are missing).
+        try {
+          state.confirm(cert, order);
+        } catch (e) {
+          if (e instanceof AheadOfLedger) {
+            throw new RpcFault(-32008, e.message, { nextSequence: e.nextSequence });
+          }
+          throw e;
+        }
+        return { ok: true, signers, pooled: state.certPool.size, orderHash: order.hash };
+      }
 
       default:
-        throw new Error(`Unknown method: ${method}`);
+        throw new RpcFault(-32601, `method not found: ${method}`);
     }
   };
-}
-
-export interface VapiInfoResult extends ValidatorInfo {
-  fianlizedRoot: null,
-  lastL1Sync: null,
-  pooledCertificates: number,
-  kownAccounts: number,
 }
 
 /** The control and introspection interface. Loopback only. */
@@ -164,43 +190,55 @@ export function vapiHandler(state: ValidatorState, hooks: Hooks): Handler {
   // wipe a validator, re-point it at another chain and mint balances, and
   // nothing ever called any of it.
   // TODO(task-1): the vapi_ surface
-  
+
   return async (method: string, params: unknown[]) => {
-    console.log("testvapi");
-    switch (method.toLowerCase().split("_")[1]) {
-
-      case "info":
-        var baseInfo = state.getInfo();
-        var vapiInfo: VapiInfoResult = {
-          name: baseInfo.name,
-          address: baseInfo.address,
-          mode: baseInfo.mode,
-          chainId: baseInfo.chainId,
-          epoch: baseInfo.epoch,
-          committee: baseInfo.committee,
-          fianlizedRoot: null,
-          lastL1Sync: null,
+    switch (method) {
+      case "vapi_info":
+        return {
+          ...state.getInfo(),
+          finalizedRoot: state.finalizedRoot,
+          lastL1Sync: state.lastL1Sync,
           pooledCertificates: state.certPool.size,
-          kownAccounts: state.accounts().length,
-        }
-        return vapiInfo;
+          knownAccounts: state.accounts().length,
+        };
 
-      case "account":
-        var baseAccInfo = state.getAccountInfo(params[0] as Address);
+      case "vapi_account": {
+        const info = state.getAccountInfo(params[0] as Address);
+        return {
+          address: info.address,
+          balance: info.balance,
+          nextSequence: info.nextSequence,
+          pending: info.pending ? orderWire(info.pending) : null,
+        };
+      }
 
-        return { address: baseAccInfo.address, balance: baseAccInfo.balance, nextSequence: baseAccInfo.nextSequence,
-                pending: baseAccInfo.pending };
+      case "vapi_pending":
+        return state.allPending().map((p) => ({ account: p.account, order: orderWire(p.order) }));
 
-      case "pending":
-        return state.allPending();
+      case "vapi_health":
+        return { ok: state.stoppedAt === null, lastL1Sync: state.lastL1Sync, stoppedAt: state.stoppedAt };
 
-      case "health":
-        return { ok: true, lastL1Sync: null, stoppedAt: null };
-      
+      // Task 2 fills these in. In standalone mode they answer with the
+      // empty values the spec gives, and never touch L1.
+      case "vapi_certificates":
+        return [...state.certPool.values()].map((c) => ({
+          epoch: c.epoch,
+          order: c.order,
+          signatures: c.signatures.length,
+        }));
+
+      case "vapi_syncNow":
+        if (state.mode === "anchored") await hooks.syncNow();
+        return { epoch: state.epoch, finalizedRoot: state.finalizedRoot, lastL1Sync: state.lastL1Sync };
+
+      case "vapi_postNow":
+        if (state.mode === "anchored") return hooks.postNow();
+        return { posted: false, batchId: null, certificates: 0 };
+
       default:
-        throw new Error(`Unknown method: ${method}`);
+        throw new RpcFault(-32601, `method not found: ${method}`);
     }
-  };  
+  };
 }
 
 /**

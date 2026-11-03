@@ -148,7 +148,7 @@ export class ValidatorState {
     this.address = cfg.address;
     if (cfg.committee) this.committee = cfg.committee;
     for (const g of cfg.genesis ?? []) {
-      this.ledger.set(key(g.address), { balance: g.balance, nextSequence: 0n });
+      this.ledger.set(addressKey(g.address), { balance: g.balance, nextSequence: 0n });
     }
   }
 
@@ -171,7 +171,7 @@ export class ValidatorState {
       balance: acc.balance,
       nextSequence: acc.nextSequence,
       pending: this.pendingOf(addr),
-      vote: this.votes.get(key(addr)),
+      vote: this.votes.get(addressKey(addr)),
     };
   }
 
@@ -185,17 +185,17 @@ export class ValidatorState {
     //
     // A read never creates an account: otherwise every balance query for a
     // random address would grow the ledger (and vapi_info's knownAccounts).
-    const acc = this.ledger.get(key(addr));
-    return acc ? { ...acc } : { balance: 0n, nextSequence: 0n };
+    const acc = this.ledger.get(addressKey(addr));
+    return acc ? acc : { balance: 0n, nextSequence: 0n };
   }
 
   /** The stored account, created on first write. */
   private mutableAccount(addr: Address): LedgerAccount {
-    const k = key(addr);
-    let acc = this.ledger.get(k);
+    const key = addressKey(addr);
+    let acc = this.ledger.get(key);
     if (!acc) {
       acc = { balance: 0n, nextSequence: 0n };
-      this.ledger.set(k, acc);
+      this.ledger.set(key, acc);
     }
     return acc;
   }
@@ -203,7 +203,7 @@ export class ValidatorState {
   pendingOf(addr: Address): TransferOrder | undefined {
     // The pending slot for one sender, if it holds anything.
     // TODO(task-1): pendingOf
-    return this.pending.get(key(addr));
+    return this.pending.get(addressKey(addr));
   }
 
   allPending(): { account: Address; order: TransferOrder }[] {
@@ -268,8 +268,8 @@ export class ValidatorState {
     // Signed Echo Broadcast, and it is what makes a quorum unable to certify
     // two different orders at one sequence.
     // TODO(task-1): remember
-    this.pending.set(key(order.sender), order);
-    if (vote) this.votes.set(key(order.sender), vote);
+    this.pending.set(addressKey(order.sender), order);
+    if (vote) this.votes.set(addressKey(order.sender), vote);
   }
 
   // ------------------------------------------------------------ confirmation
@@ -303,7 +303,6 @@ export class ValidatorState {
     // certificate is pooled for posting and the state moves when L1 accepts
     // the batch that carries it.
     // TODO(task-1): confirm
-    void cert;
 
     const sender = this.mutableAccount(order.sender);
 
@@ -318,8 +317,8 @@ export class ValidatorState {
     // No balance check: a certified order is applied whatever the balance.
     sender.balance -= order.amount + order.fee;
     sender.nextSequence += 1n;
-    this.pending.delete(key(order.sender));
-    this.votes.delete(key(order.sender));
+    this.pending.delete(addressKey(order.sender));
+    this.votes.delete(addressKey(order.sender));
 
     // A transfer credits the recipient without touching its nonce. A
     // withdrawal credits nobody here: amount and fee are burned (Task 1).
@@ -388,7 +387,7 @@ export class ValidatorState {
   accounts(): Address[] {
     // Every address this validator knows about.
     // TODO(task-1): accounts
-    return [...this.ledger.keys()].map((k) => getAddress(k));
+    return [...this.ledger.keys()].map(k => getAddress(k));
   }
 
 
@@ -396,7 +395,7 @@ export class ValidatorState {
 
 /** Ledger, pending and vote maps are keyed by the lowercase address, so a
  *  checksummed and a lowercase spelling of one account are the same account. */
-function key(addr: Address | string): string {
+function addressKey(addr: Address | string): string {
   return addr.toLowerCase();
 }
 

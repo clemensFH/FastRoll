@@ -200,7 +200,7 @@ export async function drive(
       return;
     }
     const sig = answer.signature;
-    if (typeof sig !== "string") {
+    if (sig === undefined) {
       refusals.push({ url: peer.url, reason: "answer carried no signature" });
       return;
     }

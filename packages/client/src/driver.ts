@@ -174,7 +174,7 @@ export async function drive(
   // Report them even when the run FAILED to reach a quorum, because that is
   // exactly when a validator signed two conflicting orders. A prover being
   // down must never stop a payment.
-  // TODO(task-1): drive
+
   const order = await decodeOrder(raw, chainId);
   const members = new Set(committee.map((a) => a.toLowerCase()));
 
@@ -248,7 +248,7 @@ export async function broadcast(peers: Peer[], certificate: Certificate, pollMs 
   // call bounded by pollMs, and count the acceptances. Stop waiting once
   // n - f = 5 have accepted, or all have answered; the rest may carry on
   // unwaited.
-  // TODO(task-1): broadcast
+
   let accepted = 0;
   const send = async (peer: Peer): Promise<void> => {
     const r = await within(
@@ -269,7 +269,7 @@ export async function identify(peers: Peer[]): Promise<Peer[]> {
   // Ask each peer who it is, so endpoints can be mapped to committee
   // addresses. One unreachable peer must not lose the others: keep what you
   // knew about it rather than dropping it.
-  // TODO(task-1): identify
+
   await Promise.all(
     peers.map(async (peer) => {
       const info = await within(

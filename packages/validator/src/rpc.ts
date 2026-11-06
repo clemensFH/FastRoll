@@ -94,8 +94,7 @@ export function fastpayHandler(state: ValidatorState, signer: Signer): Handler {
   //
   // accountInfo publishes `pending` with this validator's own vote on it, so
   // a challenger can collect votes by asking rather than waiting to be told.
-  // TODO(task-1): the fastpay_ surface
-  //
+
   // Parameters reach this handler already checked against FASTPAY_PARAMS
   // (serveRpc does that), so only the protocol rules are judged here.
 
@@ -189,7 +188,6 @@ export function vapiHandler(state: ValidatorState, hooks: Hooks): Handler {
   // Nothing here may mutate state beyond that. An earlier version could
   // wipe a validator, re-point it at another chain and mint balances, and
   // nothing ever called any of it.
-  // TODO(task-1): the vapi_ surface
 
   return async (method: string, params: unknown[]) => {
     switch (method) {

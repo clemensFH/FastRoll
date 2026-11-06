@@ -181,8 +181,7 @@ export class ValidatorState {
     // One account's balance and next sequence, zero-valued if it has never
     // been seen. In ANCHORED mode this reads the replayed tree instead, which
     // is Task 2.
-    // TODO(task-1): account
-    //
+
     // A read never creates an account: otherwise every balance query for a
     // random address would grow the ledger (and vapi_info's knownAccounts).
     const acc = this.ledger.get(addressKey(addr));
@@ -202,14 +201,14 @@ export class ValidatorState {
 
   pendingOf(addr: Address): TransferOrder | undefined {
     // The pending slot for one sender, if it holds anything.
-    // TODO(task-1): pendingOf
+
     return this.pending.get(addressKey(addr));
   }
 
   allPending(): { account: Address; order: TransferOrder }[] {
     // Every pending order. `vapi_pending` publishes this, and so does the
     // prover's evidence gathering.
-    // TODO(task-1): allPending
+
     return [...this.pending.values()].map((order) => ({ account: getAddress(order.sender), order }));
   }
 
@@ -231,7 +230,7 @@ export class ValidatorState {
     //
     // Throw `Refusal` with a typed reason. A client that has to parse English
     // to know whether to retry will get it wrong.
-    // TODO(task-1): check
+
     //
     // Order of the checks is the spec's "Which refusal reason applies first".
     // INVALID_FORMAT (rule 1) is raised by the caller, where decoding happens.
@@ -267,7 +266,7 @@ export class ValidatorState {
     // Take the pending slot for this sender's sequence. This is the echo in
     // Signed Echo Broadcast, and it is what makes a quorum unable to certify
     // two different orders at one sequence.
-    // TODO(task-1): remember
+
     this.pending.set(addressKey(order.sender), order);
     if (vote) this.votes.set(addressKey(order.sender), vote);
   }
@@ -302,7 +301,6 @@ export class ValidatorState {
     // In ANCHORED mode state does NOT move here, which is Task 2: the
     // certificate is pooled for posting and the state moves when L1 accepts
     // the batch that carries it.
-    // TODO(task-1): confirm
 
     const sender = this.mutableAccount(order.sender);
 
@@ -386,7 +384,7 @@ export class ValidatorState {
 
   accounts(): Address[] {
     // Every address this validator knows about.
-    // TODO(task-1): accounts
+
     return [...this.ledger.keys()].map(k => getAddress(k));
   }
 

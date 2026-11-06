@@ -268,7 +268,7 @@ export function createClient(opts: ClientOptions) {
     // Task 2 changes where balances come from: eth_getBalance and
     // eth_getTransactionCount read the finalized state replayed from L1,
     // and eth_getBlockByNumber answers about posted batches.
-    // TODO(task-1): the cast-compatible surface
+
     switch (method) {
       case "eth_chainId":
       case "net_version":
